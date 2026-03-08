@@ -5,6 +5,8 @@ import { ErrorBoundary } from '@ohif/ui-next';
 // Route Components
 import DataSourceWrapper from './DataSourceWrapper';
 import WorkList from './WorkList';
+import UPSWorkList from './WorkList/UPSWorkList';
+import UPSDataSourceWrapper from './WorkList/UPSDataSourceWrapper';
 import Local from './Local';
 import Debug from './Debug';
 import NotFound from './NotFound';
@@ -127,11 +129,19 @@ const createRoutes = ({
     props: { children: WorkList, servicesManager, extensionManager },
   };
 
+  const UPSWorkListRoute = {
+    path: '/upsworklist',
+    children: UPSDataSourceWrapper,
+    private: true,
+    props: { children: UPSWorkList, servicesManager, extensionManager },
+  };
+
   const customRoutes = customizationService.getCustomization('routes.customRoutes');
 
   const allRoutes = [
     ...routes,
     ...(showStudyList ? [WorkListRoute] : []),
+    UPSWorkListRoute,
     ...(customRoutes?.routes || []),
     ...bakedInRoutes,
     customRoutes?.notFoundRoute || notFoundRoute,

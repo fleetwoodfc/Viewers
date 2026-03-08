@@ -9,6 +9,7 @@ import {
   processSeriesResults,
 } from './qido.js';
 import dcm4cheeReject from './dcm4cheeReject.js';
+import { searchWorkitems } from './ups';
 
 import getImageId from './utils/getImageId.js';
 import dcmjs from 'dcmjs';
@@ -245,6 +246,27 @@ function createDicomWebApi(dicomWebConfig: DicomWebConfig, servicesManager) {
             null,
             queryParameters
           );
+        },
+      },
+      workitems: {
+        search: async function (params) {
+          qidoDicomWebClient.headers = getAuthorizationHeader();
+          const { patientName, patientId, procedureStepLabel, procedureStepState } =
+            params || {};
+          const queryParams: Record<string, string> = {};
+          if (patientName) {
+            queryParams['00100010'] = patientName;
+          }
+          if (patientId) {
+            queryParams['00100020'] = patientId;
+          }
+          if (procedureStepLabel) {
+            queryParams['00741204'] = procedureStepLabel;
+          }
+          if (procedureStepState) {
+            queryParams['00741000'] = procedureStepState;
+          }
+          return searchWorkitems(qidoDicomWebClient, queryParams);
         },
       },
     },
