@@ -3,12 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import moment from 'moment';
 import qs from 'query-string';
 import { useTranslation } from 'react-i18next';
-import { Types as coreTypes } from '@ohif/core';
+import { Types as coreTypes, utils } from '@ohif/core';
 
-import { StudyListPagination, EmptyStudies } from '@ohif/ui';
+import { StudyListPagination, EmptyStudies, StudyListExpandedRow } from '@ohif/ui';
 
 import {
   Header,
+  Icons,
   Tooltip,
   TooltipTrigger,
   TooltipContent,
@@ -22,6 +23,14 @@ import {
 import { useAppConfig } from '@state';
 import { useDebounce, useSearchParams } from '../../hooks';
 import upsWorkListFiltersMeta from './upsWorkListFiltersMeta';
+
+const { sortBySeriesDate } = utils;
+
+/**
+ * Module-level cache: maps referencedStudyUid → processed series array.
+ * Cleared on full page reload; persists across filter/pagination changes.
+ */
+const seriesInWorkitemsMap = new Map<string, any[]>();
 
 /** Default filter values — used for reset and URL-sync logic */
 const defaultFilterValues = {
@@ -96,6 +105,11 @@ function UPSWorkList({
   const debouncedFilterValues = useDebounce(filterValues, 200);
   const { resultsPerPage, pageNumber } = filterValues;
 
+  // Row expansion state — tracks which workitem UIDs have their row expanded
+  const [expandedRows, setExpandedRows] = useState<string[]>([]);
+  // Tracks which referencedStudyUids have already had series data fetched
+  const [studiesWithSeriesData, setStudiesWithSeriesData] = useState<string[]>([]);
+
   const setFilterValues = (val: typeof filterValues) => {
     if (filterValues.pageNumber === val.pageNumber) {
       val.pageNumber = 1;
@@ -122,6 +136,34 @@ function UPSWorkList({
       document.body.classList.remove('bg-black');
     };
   }, []);
+
+  // Fetch series data (via DICOMWeb QIDO) for each expanded row.
+  // Uses the Referenced Study Instance UID embedded in the UPS workitem so that
+  // the correct study is queried on the configured DICOMWeb server (AE).
+  useEffect(() => {
+    const fetchSeries = async (referencedStudyUid: string) => {
+      try {
+        const series = await dataSource.query.series.search(referencedStudyUid);
+        seriesInWorkitemsMap.set(referencedStudyUid, sortBySeriesDate(series));
+        setStudiesWithSeriesData(prev => [...prev, referencedStudyUid]);
+      } catch (ex) {
+        console.warn('UPS row expansion: series fetch failed for study', referencedStudyUid, ex);
+      }
+    };
+
+    for (const workitemUid of expandedRows) {
+      const item = (workitems as any[])?.find(w => w.workitemUid === workitemUid);
+      if (!item) {
+        continue;
+      }
+      const studyUid = item.referencedStudyUid;
+      if (!studyUid || studiesWithSeriesData.includes(studyUid)) {
+        continue;
+      }
+      fetchSeries(studyUid);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedRows, workitems]);
 
   // Sync URL query parameters with current filter state
   useEffect(() => {
@@ -267,16 +309,15 @@ function UPSWorkList({
 
   /** Column header labels aligned with upsWorkListFiltersMeta grid widths */
   const columnHeaders = [
+    { label: '', gridCol: 1 }, // expand icon
     { label: 'Patient Name', gridCol: 4 },
     { label: 'Patient ID', gridCol: 3 },
     { label: 'Step Label', gridCol: 5 },
     { label: 'Status', gridCol: 3 },
     { label: 'Scheduled Date/Time', gridCol: 5 },
     { label: 'Accession #', gridCol: 3 },
-    { label: 'Input Readiness', gridCol: 5 },
+    { label: 'Input Readiness', gridCol: 4 },
   ];
-
-  const totalGridCols = columnHeaders.reduce((sum, col) => sum + col.gridCol, 0);
 
   return (
     <div className="flex h-screen flex-col bg-black">
@@ -371,9 +412,7 @@ function UPSWorkList({
               <div
                 className="bg-secondary-dark text-secondary-light grid border-b border-gray-700 px-4 py-2 text-xs font-semibold uppercase"
                 style={{
-                  gridTemplateColumns: columnHeaders
-                    .map(c => `${c.gridCol}fr`)
-                    .join(' '),
+                  gridTemplateColumns: columnHeaders.map(c => `${c.gridCol}fr`).join(' '),
                 }}
               >
                 {columnHeaders.map(col => (
@@ -383,46 +422,105 @@ function UPSWorkList({
 
               {/* Rows */}
               {pagedWorkitems.map((item, idx) => {
-                const formattedDateTime =
-                  item.scheduledDateTime
-                    ? moment(item.scheduledDateTime, 'YYYYMMDDHHmmss.SSSSSS').isValid()
-                      ? moment(item.scheduledDateTime, 'YYYYMMDDHHmmss.SSSSSS').format(
-                          'MMM DD, YYYY HH:mm'
-                        )
-                      : item.scheduledDateTime
-                    : '';
+                const workitemKey = item.workitemUid || String(idx);
+                const isExpanded = expandedRows.includes(workitemKey);
+                const hasStudyRef = Boolean(item.referencedStudyUid);
+
+                const formattedDateTime = item.scheduledDateTime
+                  ? moment(item.scheduledDateTime, 'YYYYMMDDHHmmss.SSSSSS').isValid()
+                    ? moment(item.scheduledDateTime, 'YYYYMMDDHHmmss.SSSSSS').format(
+                        'MMM DD, YYYY HH:mm'
+                      )
+                    : item.scheduledDateTime
+                  : '';
 
                 const badgeClass =
                   statusBadgeClass[item.procedureStepState] ||
                   'bg-gray-600 text-white rounded px-1 text-xs';
 
+                // Series data fetched via DICOMWeb QIDO using the Referenced Study UID
+                // from the UPS workitem (0008,1110) → (0020,000D)
+                const seriesData = seriesInWorkitemsMap.get(item.referencedStudyUid);
+
                 return (
-                  <div
-                    key={item.workitemUid || idx}
-                    className="text-foreground hover:bg-secondary-dark/60 grid border-b border-gray-800 px-4 py-2 text-sm"
-                    style={{
-                      gridTemplateColumns: columnHeaders
-                        .map(c => `${c.gridCol}fr`)
-                        .join(' '),
-                    }}
-                  >
-                    <div className="truncate">{makeCopyTooltipCell(item.patientName)}</div>
-                    <div className="truncate">{makeCopyTooltipCell(item.patientId)}</div>
-                    <div className="truncate">{makeCopyTooltipCell(item.procedureStepLabel)}</div>
-                    <div>
-                      {item.procedureStepState && (
-                        <span className={badgeClass}>{item.procedureStepState}</span>
-                      )}
+                  <div key={workitemKey}>
+                    {/* Main row — click to expand/collapse */}
+                    <div
+                      className={`text-foreground grid cursor-pointer border-b border-gray-800 px-4 py-2 text-sm transition-colors ${isExpanded ? 'bg-secondary-dark/40' : 'hover:bg-secondary-dark/60'}`}
+                      style={{
+                        gridTemplateColumns: columnHeaders.map(c => `${c.gridCol}fr`).join(' '),
+                      }}
+                      onClick={() => {
+                        if (!hasStudyRef) {
+                          return;
+                        }
+                        setExpandedRows(prev =>
+                          isExpanded
+                            ? prev.filter(uid => uid !== workitemKey)
+                            : [...prev, workitemKey]
+                        );
+                      }}
+                    >
+                      {/* Expand icon — only shown when there is a Referenced Study UID */}
+                      <div className="flex items-center">
+                        {hasStudyRef && (
+                          <Icons.GroupLayers
+                            className={`w-4 ${isExpanded ? 'text-primary' : 'text-secondary-light'}`}
+                          />
+                        )}
+                      </div>
+                      <div className="truncate">{makeCopyTooltipCell(item.patientName)}</div>
+                      <div className="truncate">{makeCopyTooltipCell(item.patientId)}</div>
+                      <div className="truncate">{makeCopyTooltipCell(item.procedureStepLabel)}</div>
+                      <div>
+                        {item.procedureStepState && (
+                          <span className={badgeClass}>{item.procedureStepState}</span>
+                        )}
+                      </div>
+                      <div>{formattedDateTime}</div>
+                      <div className="truncate">{makeCopyTooltipCell(item.accessionNumber)}</div>
+                      <div>
+                        {item.inputReadinessState && (
+                          <span className="rounded bg-gray-700 px-1 text-xs text-white">
+                            {item.inputReadinessState}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div>{formattedDateTime}</div>
-                    <div className="truncate">{makeCopyTooltipCell(item.accessionNumber)}</div>
-                    <div>
-                      {item.inputReadinessState && (
-                        <span className="rounded bg-gray-700 px-1 text-xs text-white">
-                          {item.inputReadinessState}
-                        </span>
-                      )}
-                    </div>
+
+                    {/* Expanded row — series data queried via QIDO using the Referenced Study UID */}
+                    {isExpanded && (
+                      <StudyListExpandedRow
+                        seriesTableColumns={{
+                          description: t('StudyList:Description'),
+                          seriesNumber: t('StudyList:Series'),
+                          modality: t('StudyList:Modality'),
+                          instances: t('StudyList:Instances'),
+                        }}
+                        seriesTableDataSource={
+                          seriesData
+                            ? seriesData.map(s => ({
+                                description: s.description || '(empty)',
+                                seriesNumber: s.seriesNumber ?? '',
+                                modality: s.modality || '',
+                                instances: s.numSeriesInstances || '',
+                              }))
+                            : []
+                        }
+                      >
+                        <div className="text-secondary-light text-xs">
+                          {item.referencedStudyUid ? (
+                            <span>
+                              Referenced Study:{' '}
+                              <span className="font-mono">{item.referencedStudyUid}</span>
+                            </span>
+                          ) : null}
+                          {!seriesData && (
+                            <span className="ml-4 italic">Loading series…</span>
+                          )}
+                        </div>
+                      </StudyListExpandedRow>
+                    )}
                   </div>
                 );
               })}
