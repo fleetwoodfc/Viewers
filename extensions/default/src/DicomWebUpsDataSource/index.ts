@@ -203,6 +203,19 @@ export type UpsConfig = {
   friendlyName?: string;
 };
 
+// ---------------------------------------------------------------------------
+// Helper: construct a URL that works whether upsRoot is an absolute URL
+// (e.g. "https://pacs.example.com/rs") or a relative path
+// (e.g. "/dcm4chee-arc/aets/WORKLIST/rs").  new URL() requires an absolute
+// URL as its first argument, so we resolve relative paths against the current
+// window origin.
+// ---------------------------------------------------------------------------
+function resolveUpsUrl(rawUrl: string): URL {
+  return rawUrl.includes('://')
+    ? new URL(rawUrl)
+    : new URL(rawUrl, window.location.origin);
+}
+
 function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
   const { userAuthenticationService } = servicesManager.services;
 
@@ -217,12 +230,7 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
 
   // Shared fetch wrapper with auth + JSON accept header
   const upsGet = async (path: string, queryParams: Record<string, string> = {}) => {
-    const rawUrl = `${upsConfig.upsRoot}${path}`;
-    // new URL() requires an absolute URL. If upsRoot is a relative path (e.g.
-    // "/dcm4chee-arc/aets/WORKLIST/rs"), resolve it against the current origin.
-    const url = rawUrl.startsWith('http')
-      ? new URL(rawUrl)
-      : new URL(rawUrl, window.location.origin);
+    const url = resolveUpsUrl(`${upsConfig.upsRoot}${path}`);
     Object.entries(queryParams).forEach(([k, v]) => url.searchParams.set(k, v));
 
     const response = await fetch(url.toString(), {
@@ -370,14 +378,11 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
        * @returns Location header value (URI of created workitem)
        */
       workitem: async (dataset: object, workitemUID?: string) => {
-        const rawUrl = workitemUID
-          ? `${upsConfig.upsRoot}/workitems?workitem=${workitemUID}`
-          : `${upsConfig.upsRoot}/workitems`;
-        // new URL() requires an absolute URL. If upsRoot is a relative path (e.g.
-        // "/dcm4chee-arc/aets/WORKLIST/rs"), resolve it against the current origin.
-        const url = rawUrl.startsWith('http')
-          ? new URL(rawUrl)
-          : new URL(rawUrl, window.location.origin);
+        const url = resolveUpsUrl(
+          workitemUID
+            ? `${upsConfig.upsRoot}/workitems?workitem=${workitemUID}`
+            : `${upsConfig.upsRoot}/workitems`
+        );
         const response = await fetch(url.toString(), {
           method: 'POST',
           headers: {
