@@ -211,7 +211,7 @@ export type UpsConfig = {
 // window origin.
 // ---------------------------------------------------------------------------
 function resolveUpsUrl(rawUrl: string): URL {
-  return rawUrl.includes('://')
+  return rawUrl.startsWith('http://') || rawUrl.startsWith('https://')
     ? new URL(rawUrl)
     : new URL(rawUrl, window.location.origin);
 }
@@ -415,7 +415,7 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
           stateDS['00081195'] = { vr: 'UI', Value: [transactionUID] };
         }
         const response = await fetch(
-          `${upsConfig.upsRoot}/workitems/${workitemUID}/state`,
+          resolveUpsUrl(`${upsConfig.upsRoot}/workitems/${workitemUID}/state`).toString(),
           {
             method: 'PUT',
             headers: {
@@ -439,7 +439,7 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
        */
       subscribe: async (workitemUID: string, aetitle: string) => {
         const response = await fetch(
-          `${upsConfig.upsRoot}/workitems/${workitemUID}/subscribers/${aetitle}`,
+          resolveUpsUrl(`${upsConfig.upsRoot}/workitems/${workitemUID}/subscribers/${aetitle}`).toString(),
           {
             method: 'POST',
             headers: getAuthorizationHeader(),
