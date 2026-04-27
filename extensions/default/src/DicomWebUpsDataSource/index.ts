@@ -217,7 +217,10 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
 
   // Shared fetch wrapper with auth + JSON accept header
   const upsGet = async (path: string, queryParams: Record<string, string> = {}) => {
-    const url = new URL(`${upsConfig.upsRoot}${path}`);
+    const rawUrl = `${upsConfig.upsRoot}${path}`;
+    const url = rawUrl.startsWith('http')
+      ? new URL(rawUrl)
+      : new URL(rawUrl, window.location.origin);
     Object.entries(queryParams).forEach(([k, v]) => url.searchParams.set(k, v));
 
     const response = await fetch(url.toString(), {
@@ -365,11 +368,12 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
        * @returns Location header value (URI of created workitem)
        */
       workitem: async (dataset: object, workitemUID?: string) => {
-        const url = new URL(
-          workitemUID
-            ? `${upsConfig.upsRoot}/workitems?workitem=${workitemUID}`
-            : `${upsConfig.upsRoot}/workitems`
-        );
+        const rawUrl = workitemUID
+          ? `${upsConfig.upsRoot}/workitems?workitem=${workitemUID}`
+          : `${upsConfig.upsRoot}/workitems`;
+        const url = rawUrl.startsWith('http')
+          ? new URL(rawUrl)
+          : new URL(rawUrl, window.location.origin);
         const response = await fetch(url.toString(), {
           method: 'POST',
           headers: {
