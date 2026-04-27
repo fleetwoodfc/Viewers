@@ -1,5 +1,5 @@
 # Stage 1: Build the application
-FROM node:20-slim as builder
+FROM node:20.19.0-slim AS builder
 
 # Setup the working directory
 RUN mkdir /usr/src/app
@@ -8,16 +8,17 @@ WORKDIR /usr/src/app
 # Install dependencies
 RUN apt-get update && apt-get install -y build-essential python3
 
-COPY ./ /usr/src/app/
-
 # Install bun and lerna (required by build scripts)
 RUN npm install -g bun@1.2.23
 RUN npm install -g lerna@7.4.2
+
+COPY ./ /usr/src/app/
+
 ENV PATH=/usr/local/bin:/usr/src/app/node_modules/.bin:$PATH
 
 # Install node dependencies
-RUN yarn config set workspaces-experimental true
-RUN bun install
+# RUN yarn config set workspaces-experimental true
+RUN bun install --frozen-lockfile 
 
 # set APP_CONFIG for dcm4chee
 ENV APP_CONFIG=config/docker-nginx-dcm4chee.js

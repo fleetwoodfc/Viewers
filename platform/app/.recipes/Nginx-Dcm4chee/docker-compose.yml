@@ -63,7 +63,7 @@ services:
       # Nginx config
       - ./config/nginx.conf:/etc/nginx/nginx.conf
       # Logs
-      - ./logs/nginx:/var/logs/nginx
+      - /var/log/nginx:/var/logs/nginx
       # Let's Encrypt
       # - letsencrypt_certificates:/etc/letsencrypt
       # - letsencrypt_challenges:/var/www/letsencrypt
