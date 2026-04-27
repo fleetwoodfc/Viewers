@@ -88,7 +88,7 @@ window.config = {
       ],
     },
   ],
-  defaultDataSourceName: 'ohif',
+  defaultDataSourceName: 'ups',
   /* Dynamic config allows user to pass "configUrl" query string this allows to load config without recompiling application. The regex will ensure valid configuration source */
   // dangerouslyUseDynamicConfig: {
   //   enabled: true,
@@ -128,7 +128,17 @@ window.config = {
         omitQuotationForMultipartRequest: true,
       },
     },
-
+{
+  namespace: '@ohif/extension-default.dataSourcesModule.dicomwebups',
+  sourceName: 'ups',
+  configuration: {
+    friendlyName: 'UPS-RS Worklist',
+    name: 'UPS',
+    upsRoot: 'https://your-pacs-server/rs',  // ← your UPS-RS base URL
+    supportsFuzzyMatching: true,
+    supportsWildcard: true,
+  },
+},
     {
       namespace: '@ohif/extension-default.dataSourcesModule.dicomweb',
       sourceName: 'ohif2',
