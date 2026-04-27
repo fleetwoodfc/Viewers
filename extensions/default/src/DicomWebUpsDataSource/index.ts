@@ -121,7 +121,9 @@ function mapUpsQueryParams(
     params['00080050'] = accession;
   }
   if (modality) {
-    params['00080061'] = modality;
+    // Note: Modality in UPS is nested within ScheduledStepAttributesSequence;
+    // top-level QIDO filtering on ModalitiesInStudy (00080061) is not standard
+    // for UPS workitem queries. Omit for now.
   }
   if (studyInstanceUid) {
     params['0020000D'] = studyInstanceUid;
