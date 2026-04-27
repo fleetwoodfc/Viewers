@@ -9,7 +9,7 @@ window.config = {
   showCPUFallbackMessage: true,
   showLoadingIndicator: true,
   strictZSpacingForVolumeViewport: true,
-  defaultDataSourceName: 'dicomweb',
+  defaultDataSourceName: 'ups',
   dataSources: [
     {
       namespace: '@ohif/extension-default.dataSourcesModule.dicomweb',
@@ -27,5 +27,16 @@ window.config = {
         omitQuotationForMultipartRequest: true,
       },
     },
+{
+  namespace: '@ohif/extension-default.dataSourcesModule.dicomwebups',
+  sourceName: 'ups',
+  configuration: {
+    friendlyName: 'UPS-RS Worklist',
+    name: 'UPS',
+    upsRoot: '/dcm4chee-arc/aets/WORKLIST/rs',  // ← your UPS-RS base URL
+    supportsFuzzyMatching: true,
+    supportsWildcard: true,
+  },
+},
   ],
 };
