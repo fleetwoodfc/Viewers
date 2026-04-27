@@ -27,5 +27,19 @@ window.config = {
         omitQuotationForMultipartRequest: true,
       },
     },
+    {
+      namespace: '@ohif/extension-default.dataSourcesModule.dicomwebups',
+      sourceName: 'ups',
+      configuration: {
+        friendlyName: 'UPS-RS Worklist',
+        name: 'UPS',
+        upsRoot: '/dcm4chee-arc/aets/WORKLIST/rs',
+        qidoRoot: '/dcm4chee-arc/aets/DCM4CHEE/rs',
+        wadoRoot: '/dcm4chee-arc/aets/DCM4CHEE/rs',
+        supportsFuzzyMatching: true,
+        supportsWildcard: true,
+        omitQuotationForMultipartRequest: true,
+      },
+    },
   ],
 };
