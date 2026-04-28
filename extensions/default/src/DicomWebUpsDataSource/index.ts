@@ -1,4 +1,5 @@
-import { IWebApiDataSource } from '@ohif/core';
+import { IWebApiDataSource, DICOMWeb, utils } from '@ohif/core';
+const { getString, getName } = DICOMWeb;
 import { createDicomWebApi, DicomWebConfig } from '../DicomWebDataSource/index';
 
 export type UpsConfig = DicomWebConfig & {
@@ -16,22 +17,13 @@ const TAG_PATIENT_ID = '00100020';
 const TAG_PATIENT_BIRTHDATE = '00100030';
 const TAG_PATIENT_SEX = '00100040';
 const TAG_ACCESSION_NUMBER = '00080050';
-const TAG_STUDY_DESCRIPTION = '00081030';
+const TAG_SPS_DESCRIPTION = '00741204';
 const TAG_INSTITUTION_NAME = '00080080';
 const TAG_INSTANCES_NUMBER = '00201208';
 const TAG_SCHEDULED_STEP_ATTR_SEQ = '00400270';
 
-function getStr(dataset, tag: string): string {
-  const el = dataset[tag];
-  if (!el || !el.Value || !el.Value.length) {
-    return '';
-  }
-  const val = el.Value[0];
-  if (typeof val === 'object' && val !== null) {
-    // PersonName
-    return val.Alphabetic || '';
-  }
-  return String(val);
+function getStr(tag: Record<string, any>, key: string): string {
+  return getString(tag[key]) ?? '';
 }
 
 function getUpsModality(workitem): string {
@@ -73,10 +65,10 @@ function workitemToStudyRow(workitem): Record<string, unknown> {
     time,
     accession: getStr(workitem, TAG_ACCESSION_NUMBER),
     mrn: getStr(workitem, TAG_PATIENT_ID),
-    patientName: getStr(workitem, TAG_PATIENT_NAME),
+    patientName: utils.formatPN(getName(workitem[TAG_PATIENT_NAME])) || '',
     patientBirthdate: getStr(workitem, TAG_PATIENT_BIRTHDATE),
     sex: getStr(workitem, TAG_PATIENT_SEX),
-    description: getStr(workitem, TAG_STUDY_DESCRIPTION),
+    description: getStr(workitem, TAG_SPS_DESCRIPTION),
     modalities: getUpsModality(workitem),
     instances: getStr(workitem, TAG_INSTANCES_NUMBER) || '',
     NumInstances: Number(getStr(workitem, TAG_INSTANCES_NUMBER)) || 0,
@@ -115,7 +107,7 @@ function mapUpsQueryParams(
     params['00404005'] = studyDate;
   }
   if (description) {
-    params['00081030'] = options.supportsWildcard ? `*${description}*` : description;
+    params['00741204'] = options.supportsWildcard ? `*${description}*` : description;
   }
   if (accession) {
     params['00080050'] = accession;
@@ -128,6 +120,19 @@ function mapUpsQueryParams(
   if (studyInstanceUid) {
     params['0020000D'] = studyInstanceUid;
   }
+
+  params['includefield'] = [
+    '00100010', // PatientName
+    '00100020', // PatientID
+    '00080050', // AccessionNumber
+    '00404005', // Scheduled Procedure Step Start DateTime
+    '00741204', // Procedure Step Label (description)
+    '00080060', // Modality
+    '00404021', // InputInformationSequence
+    '0020000D', // StudyInstanceUID
+    '00741000', // Procedure Step State
+    '00080018', // SOP Instance UID (workitem UID)
+  ].join(',');
 
   return params;
 }
