@@ -27,20 +27,46 @@ function getStr(tag: Record<string, any>, key: string): string {
 }
 
 function getUpsModality(workitem): string {
-  // Try to get modality from ScheduledStepAttributesSequence
+  // 1. Try direct Modality tag (some servers include it, and it's in our includefield)
+  const direct = getStr(workitem, '00080060');
+  if (direct) {
+    return direct;
+  }
+
+  // 2. Try ScheduledWorkitemCodeSequence > Code Meaning (00080104)
+  const swcs = workitem['00404018']?.Value;
+  if (swcs?.length) {
+    const meaning = getString(swcs[0]['00080104']);
+    if (meaning) {
+      return meaning;
+    }
+  }
+
+  // 3. Try InputInformationSequence (00404021) > Modality (00080060)
+  const iis = workitem['00404021']?.Value;
+  if (iis?.length) {
+    const mod = getString(iis[0]['00080060']);
+    if (mod) {
+      return mod;
+    }
+  }
+
+  // 4. Fall back to ScheduledStepAttributesSequence
   const seq = workitem[TAG_SCHEDULED_STEP_ATTR_SEQ];
   if (seq && seq.Value && seq.Value.length) {
     const item = seq.Value[0];
-    const mod = item['00400009'] || item['00080060'];
+    const mod = item['00080060'];
     if (mod && mod.Value && mod.Value.length) {
       return String(mod.Value[0]);
     }
   }
-  // Fall back to ModalitiesInStudy
+
+  // 5. Fall back to ModalitiesInStudy
   const modalitiesEl = workitem[TAG_MODALITIES_IN_STUDY];
   if (modalitiesEl && modalitiesEl.Value && modalitiesEl.Value.length) {
     return modalitiesEl.Value.join('\\');
   }
+
   return '';
 }
 
@@ -128,7 +154,8 @@ function mapUpsQueryParams(
     '00404005', // Scheduled Procedure Step Start DateTime
     '00741204', // Procedure Step Label (description)
     '00080060', // Modality
-    '00404021', // InputInformationSequence
+    '00404018', // ScheduledWorkitemCodeSequence (used for modality fallback)
+    '00404021', // InputInformationSequence (used for modality fallback)
     '0020000D', // StudyInstanceUID
     '00741000', // Procedure Step State
     '00080018', // SOP Instance UID (workitem UID)
