@@ -54,7 +54,6 @@ export const longitudinalRoute =
 
 const REPORTING_STATION_CLASSES = [
   'interpretation workstation',
-  '110101',
   'reporting workstation',
   'diagnostic workstation',
   'diagnostic reporting',
