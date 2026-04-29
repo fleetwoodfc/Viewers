@@ -52,6 +52,18 @@ export const longitudinalRoute =
       layoutInstance: longitudinalInstance,
     };
 
+const REPORTING_STATION_CLASSES = [
+  'interpretation workstation',
+  '110101',
+  'reporting workstation',
+  'diagnostic workstation',
+  'diagnostic reporting',
+  'mammography reporting',
+  'nuclear medicine reporting',
+  'pathology reporting',
+  'cardiology reporting',
+];
+
 export const modeInstance = {
     ...basicModeInstance,
     // TODO: We're using this as a route segment
@@ -63,6 +75,16 @@ export const modeInstance = {
       longitudinalRoute
     ],
     extensions: extensionDependencies,
+    isValidMode: function ({ modalities, study }) {
+      // Enable Basic Viewer for Reporting/Diagnostic station classes
+      const stationClass = (study?.stationClass ?? '').toLowerCase().trim();
+      if (stationClass && REPORTING_STATION_CLASSES.includes(stationClass)) {
+        return { valid: true, description: 'Reporting/Diagnostic station class' };
+      }
+
+      // Fall back to the standard modality-based check from basic mode
+      return basicModeInstance.isValidMode.call(this, { modalities, study });
+    },
   };
 
 const mode = {
