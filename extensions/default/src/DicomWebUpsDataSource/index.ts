@@ -21,6 +21,7 @@ const TAG_SPS_DESCRIPTION = '00741204';
 const TAG_INSTITUTION_NAME = '00080080';
 const TAG_INSTANCES_NUMBER = '00201208';
 const TAG_SCHEDULED_STEP_ATTR_SEQ = '00400270';
+const TAG_SCHEDULED_STATION_CLASS_CODE_SEQ = '00404026';
 
 function getStr(tag: Record<string, any>, key: string): string {
   return getString(tag[key]) ?? '';
@@ -70,6 +71,17 @@ function getUpsModality(workitem): string {
   return '';
 }
 
+function getStationClass(workitem): string {
+  const seq = workitem[TAG_SCHEDULED_STATION_CLASS_CODE_SEQ]?.Value;
+  if (seq?.length) {
+    const meaning = getString(seq[0]['00080104']);
+    if (meaning) return meaning;
+    const code = getString(seq[0]['00080100']);
+    if (code) return code;
+  }
+  return '';
+}
+
 function splitDateTime(dtString: string): { date: string; time: string } {
   if (!dtString) {
     return { date: '', time: '' };
@@ -100,6 +112,7 @@ function workitemToStudyRow(workitem): Record<string, unknown> {
     NumInstances: Number(getStr(workitem, TAG_INSTANCES_NUMBER)) || 0,
     procedureStepState: getStr(workitem, TAG_PROCEDURE_STEP_STATE),
     institutionName: getStr(workitem, TAG_INSTITUTION_NAME),
+    stationClass: getStationClass(workitem),
   };
 }
 
@@ -156,6 +169,7 @@ function mapUpsQueryParams(
     '00080060', // Modality
     '00404018', // ScheduledWorkitemCodeSequence (used for modality fallback)
     '00404021', // InputInformationSequence (used for modality fallback)
+    '00404026', // Scheduled Station Class Code Sequence
     '0020000D', // StudyInstanceUID
     '00741000', // Procedure Step State
     '00080018', // SOP Instance UID (workitem UID)
