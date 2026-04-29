@@ -280,6 +280,26 @@ window.config = {
         friendlyName: 'dicom local',
       },
     },
+    {
+      namespace: '@ohif/extension-default.dataSourcesModule.dicomwebups',
+      sourceName: 'ups',
+      configuration: {
+        friendlyName: 'UPS-RS Worklist',
+        name: 'UPS',
+        upsRoot: 'https://d14fa38qiwhyfd.cloudfront.net/dicomweb',
+        qidoRoot: 'https://d14fa38qiwhyfd.cloudfront.net/dicomweb',
+        wadoRoot: 'https://d14fa38qiwhyfd.cloudfront.net/dicomweb',
+        supportsFuzzyMatching: true,
+        supportsWildcard: false,
+        staticWado: true,
+        singlepart: 'bulkdata,video',
+        bulkDataURI: {
+          enabled: true,
+          relativeResolution: 'studies',
+        },
+        omitQuotationForMultipartRequest: true,
+      },
+    },
   ],
   httpErrorHandler: error => {
     // This is 429 when rejected from the public idc sandbox too often.
