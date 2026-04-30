@@ -129,6 +129,7 @@ function mapUpsQueryParams(
   const {
     patientName,
     mrn,
+    patientId,
     studyDate,
     description,
     accession,
@@ -136,11 +137,14 @@ function mapUpsQueryParams(
     studyInstanceUid,
   } = origParams;
 
+  // Accept both `mrn` and `patientId` (used by getStudiesForPatientByMRN) as the PatientID filter
+  const effectiveMrn = mrn || patientId;
+
   if (patientName) {
     params['00100010'] = options.supportsWildcard ? `*${patientName}*` : patientName;
   }
-  if (mrn) {
-    params['00100020'] = mrn;
+  if (effectiveMrn) {
+    params['00100020'] = effectiveMrn;
   }
   if (studyDate) {
     params['00404005'] = studyDate;
