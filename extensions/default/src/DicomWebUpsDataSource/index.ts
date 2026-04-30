@@ -219,7 +219,13 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
     ...dicomWebImpl,
 
     query: {
-      studies: {
+      // Use standard QIDO-RS for study queries so that the Basic Viewer study panel
+      // retrieves real DICOM studies rather than UPS workitems.
+      studies: dicomWebImpl.query.studies,
+      series: dicomWebImpl.query.series,
+      instances: dicomWebImpl.query.instances,
+      // UPS-specific workitems search, exposed separately for worklist panels.
+      workitems: {
         mapParams: (origParams) =>
           mapUpsQueryParams(origParams, {
             supportsFuzzyMatching: upsConfig.supportsFuzzyMatching,
@@ -235,8 +241,6 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
         },
         processResults: (workitems) => (workitems || []).map(workitemToStudyRow),
       },
-      series: dicomWebImpl.query.series,
-      instances: dicomWebImpl.query.instances,
     },
 
     store: {
