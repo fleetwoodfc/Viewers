@@ -134,10 +134,27 @@ function PanelStudyBrowser({
 
       let qidoStudiesForPatient = qidoForStudyUID;
 
-      try {
-        qidoStudiesForPatient = await getStudiesForPatientByMRN(qidoForStudyUID);
-      } catch (error) {
-        console.warn('getStudiesForPatientByMRN failed:', error);
+      if (studyMode === 'primary') {
+        // In 'primary' mode (Basic Viewer opened with a specific StudyInstanceUID),
+        // skip the PatientID/MRN expansion entirely to avoid triggering an extra
+        // server call (e.g. DicomWebUPS returns all patient workitems when queried
+        // by PatientID). Use the direct study-UID query result as-is.
+        // If the server doesn't support StudyInstanceUID filtering and returned
+        // workitems that don't carry the correct UID, inject a synthetic minimal
+        // entry so that display sets already loaded via WADO-RS can still be
+        // matched and shown in the panel.
+        if (!qidoForStudyUID.find(s => s.studyInstanceUid === StudyInstanceUID)) {
+          qidoStudiesForPatient = [{ studyInstanceUid: StudyInstanceUID, instances: 0 }];
+        }
+        // else: qidoForStudyUID already contains the correct study — use it as-is (already assigned above)
+      } else {
+        // In other modes (e.g. 'all'), fetch all studies for the patient so that
+        // prior studies appear in the panel.
+        try {
+          qidoStudiesForPatient = await getStudiesForPatientByMRN(qidoForStudyUID);
+        } catch (error) {
+          console.warn(error);
+        }
       }
 
       // Discard results if the effect has since been cleaned up
