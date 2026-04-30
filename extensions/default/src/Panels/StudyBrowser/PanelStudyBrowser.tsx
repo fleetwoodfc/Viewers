@@ -108,6 +108,11 @@ function PanelStudyBrowser({
 
   // ~~ studyDisplayList
   useEffect(() => {
+    // Reset accumulated state when the active study set changes so that
+    // the panel shows only the current study, not previously viewed studies.
+    fetchedStudiesRef.current.clear();
+    setStudyDisplayList([]);
+
     // Fetch all studies for the patient in each primary study
     async function fetchStudiesForPatient(StudyInstanceUID) {
       // Skip fetching if we've already fetched this study
