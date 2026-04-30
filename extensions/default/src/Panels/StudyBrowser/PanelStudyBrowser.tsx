@@ -113,6 +113,11 @@ function PanelStudyBrowser({
     fetchedStudiesRef.current.clear();
     setStudyDisplayList([]);
 
+    // Guard against stale async completions: if this effect is cleaned up
+    // (i.e. StudyInstanceUIDs changes again) before a fetch resolves, the
+    // resolved data must not be applied to the new state.
+    let isCurrent = true;
+
     // Fetch all studies for the patient in each primary study
     async function fetchStudiesForPatient(StudyInstanceUID) {
       // Skip fetching if we've already fetched this study
@@ -135,6 +140,11 @@ function PanelStudyBrowser({
         qidoStudiesForPatient = await getStudiesForPatientByMRN(qidoForStudyUID);
       } catch (error) {
         console.warn(error);
+      }
+
+      // Discard results if the effect has since been cleaned up
+      if (!isCurrent) {
+        return;
       }
 
       const mappedStudies = _mapDataSourceStudies(qidoStudiesForPatient);
@@ -160,6 +170,10 @@ function PanelStudyBrowser({
     }
 
     StudyInstanceUIDs.forEach(sid => fetchStudiesForPatient(sid));
+
+    return () => {
+      isCurrent = false;
+    };
   }, [StudyInstanceUIDs, dataSource, getStudiesForPatientByMRN, navigate]);
 
   // ~~ Initial Thumbnails
