@@ -153,7 +153,7 @@ function PanelStudyBrowser({
         try {
           qidoStudiesForPatient = await getStudiesForPatientByMRN(qidoForStudyUID);
         } catch (error) {
-          console.warn(error);
+          console.warn('getStudiesForPatientByMRN failed:', error);
         }
       }
 
