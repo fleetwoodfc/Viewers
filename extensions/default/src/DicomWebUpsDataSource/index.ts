@@ -128,34 +128,36 @@ function mapUpsQueryParams(
 
   const {
     patientName,
-    mrn,
-    studyDate,
-    description,
-    accession,
-    modality,
+    patientId,
+    startDate,
+    endDate,
+    studyDescription,
+    accessionNumber,
+    modalitiesInStudy: _modalitiesInStudy,
     studyInstanceUid,
   } = origParams;
 
   if (patientName) {
     params['00100010'] = options.supportsWildcard ? `*${patientName}*` : patientName;
   }
-  if (mrn) {
-    params['00100020'] = mrn;
+  if (patientId) {
+    params['00100020'] = patientId;
   }
-  if (studyDate) {
-    params['00404005'] = studyDate;
+  if (startDate && endDate) {
+    params['00404005'] = `${startDate}-${endDate}`;
+  } else if (startDate) {
+    params['00404005'] = `${startDate}-`;
+  } else if (endDate) {
+    params['00404005'] = `-${endDate}`;
   }
-  if (description) {
-    params['00741204'] = options.supportsWildcard ? `*${description}*` : description;
+  if (studyDescription) {
+    params['00741204'] = options.supportsWildcard ? `*${studyDescription}*` : studyDescription;
   }
-  if (accession) {
-    params['00080050'] = accession;
+  if (accessionNumber) {
+    params['00080050'] = accessionNumber;
   }
-  if (modality) {
-    // Note: Modality in UPS is nested within ScheduledStepAttributesSequence;
-    // top-level QIDO filtering on ModalitiesInStudy (00080061) is not standard
-    // for UPS workitem queries. Omit for now.
-  }
+  // _modalitiesInStudy omitted: Modality in UPS is nested within ScheduledStepAttributesSequence;
+  // top-level QIDO filtering on ModalitiesInStudy (00080061) is not standard for UPS workitem queries.
   if (studyInstanceUid) {
     params['0020000D'] = studyInstanceUid;
   }
@@ -213,6 +215,17 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
 
   const implementation = {
     ...dicomWebImpl,
+
+    initialize: ({ params, query }) => {
+      if (upsConfig.onConfiguration && typeof upsConfig.onConfiguration === 'function') {
+        Object.assign(upsConfig, upsConfig.onConfiguration(upsConfig, { params, query }));
+      }
+      // Only delegate to the DicomWeb initialize if QIDO/WADO roots are configured,
+      // since a UPS-only setup may not have them.
+      if (upsConfig.qidoRoot || upsConfig.wadoRoot) {
+        dicomWebImpl.initialize({ params, query });
+      }
+    },
 
     query: {
       studies: {
