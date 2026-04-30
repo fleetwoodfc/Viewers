@@ -134,12 +134,17 @@ function PanelStudyBrowser({
 
       let qidoStudiesForPatient = qidoForStudyUID;
 
-      // try to fetch the prior studies based on the patientID if the
-      // server can respond.
-      try {
-        qidoStudiesForPatient = await getStudiesForPatientByMRN(qidoForStudyUID);
-      } catch (error) {
-        console.warn(error);
+      // In 'primary' mode (e.g. Basic Viewer opened with a specific StudyInstanceUID),
+      // do NOT expand to all patient studies. This prevents accumulation when using
+      // datasources like DicomWebUPS that return all patient workitems when queried by MRN.
+      if (studyMode !== 'primary') {
+        // try to fetch the prior studies based on the patientID if the
+        // server can respond.
+        try {
+          qidoStudiesForPatient = await getStudiesForPatientByMRN(qidoForStudyUID);
+        } catch (error) {
+          console.warn(error);
+        }
       }
 
       // Discard results if the effect has since been cleaned up
