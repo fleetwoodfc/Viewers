@@ -141,16 +141,23 @@ function PanelStudyBrowser({
 
         if (studyMode === 'primary') {
           // In 'primary' mode (e.g. Basic Viewer opened with a specific StudyInstanceUID),
-          // filter the patient studies to only those we were opened with. This prevents
-          // accumulation (e.g. when DicomWebUPS returns all patient workitems when queried
-          // by MRN) while still reliably finding the study data for servers that do not
-          // support filtering workitems directly by StudyInstanceUID.
-          const filtered = allPatientStudies.filter(s =>
-            StudyInstanceUIDs.includes(s.studyInstanceUid)
+          // only include the specific requested study to prevent accumulation of all
+          // patient workitems (e.g. when DicomWebUPS returns all patient workitems
+          // when queried by MRN).
+          const filtered = allPatientStudies.filter(
+            s => s.studyInstanceUid === StudyInstanceUID
           );
           if (filtered.length > 0) {
             qidoStudiesForPatient = filtered;
+          } else if (!qidoForStudyUID.find(s => s.studyInstanceUid === StudyInstanceUID)) {
+            // Neither the MRN search nor the direct study-UID search returned a
+            // workitem with the correct StudyInstanceUID (e.g. the server returned
+            // all workitems unfiltered and they all carry a different UID). Inject
+            // a synthetic minimal entry so that display sets already loaded via
+            // WADO-RS can still be matched and shown in the panel.
+            qidoStudiesForPatient = [{ studyInstanceUid: StudyInstanceUID, instances: 0 }];
           }
+          // else: qidoForStudyUID already has an entry with the correct UID; use it as-is
         } else {
           qidoStudiesForPatient = allPatientStudies;
         }
