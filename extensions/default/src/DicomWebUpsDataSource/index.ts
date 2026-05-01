@@ -52,7 +52,7 @@ function getUpsModality(workitem): string {
 
   const modalitiesEl = workitem[TAG_MODALITIES_IN_STUDY];
   if (modalitiesEl && modalitiesEl.Value && modalitiesEl.Value.length) {
-    return modalitiesEl.Value.join('\');
+    return modalitiesEl.Value.join('\\');
   }
 
   return '';
@@ -127,30 +127,27 @@ function mapUpsQueryParams(
   }
   if (studyDescription) params['00741204'] = options.supportsWildcard ? `*${studyDescription}*` : studyDescription;
   if (accessionNumber) params['00080050'] = accessionNumber;
-  // _modalitiesInStudy omitted: Modality in UPS is nested within ScheduledStepAttributesSequence;
-  // top-level QIDO filtering on ModalitiesInStudy (00080061) is not standard for UPS workitem queries.
   if (studyInstanceUid) params['0020000D'] = studyInstanceUid;
 
   params['includefield'] = [
-    '00100010', // PatientName
-    '00100020', // PatientID
-    '00080050', // AccessionNumber
-    '00404005', // Scheduled Procedure Step Start DateTime
-    '00741204', // Procedure Step Label (description)
-    '00080060', // Modality
-    '00404018', // ScheduledWorkitemCodeSequence (used for modality fallback)
-    '00404021', // InputInformationSequence (used for modality fallback)
-    '00404026', // Scheduled Station Class Code Sequence
-    '0020000D', // StudyInstanceUID
-    '00741000', // Procedure Step State
-    '00080018', // SOP Instance UID (workitem UID)
+    '00100010',
+    '00100020',
+    '00080050',
+    '00404005',
+    '00741204',
+    '00080060',
+    '00404018',
+    '00404021',
+    '00404026',
+    '0020000D',
+    '00741000',
+    '00080018',
   ].join(',');
 
   return params;
 }
 
 function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
-  // Create the full DicomWeb base implementation (QIDO + WADO)
   const dicomWebImpl = createDicomWebApi(upsConfig, servicesManager);
 
   const { userAuthenticationService } = servicesManager.services;
@@ -188,30 +185,13 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
       if (upsConfig.onConfiguration && typeof upsConfig.onConfiguration === 'function') {
         Object.assign(upsConfig, upsConfig.onConfiguration(upsConfig, { params, query }));
       }
-      // Only delegate to the DicomWeb initialize if QIDO/WADO roots are configured,
-      // since a UPS-only setup may not have them.
       if (upsConfig.qidoRoot || upsConfig.wadoRoot) {
         dicomWebImpl.initialize({ params, query });
       }
     },
 
     query: {
-      /**
-       * Inherit query.studies directly from DicomWebDataSource so that standard
-       * QIDO-RS study searches (e.g. prior studies in the study browser) continue
-       * to work unchanged against the configured qidoRoot.
-       */
       studies: dicomWebImpl.query.studies,
-
-      /**
-       * query.workitems is the dedicated UPS-RS query namespace.
-       * It queries the UPS-RS /workitems endpoint and maps the resulting workitem
-       * attributes into the same normalised row shape used by the study list, so
-       * the existing Worklist UI can render them without changes.
-       *
-       * DataSourceWrapper can be directed here via
-       * dataSource.getConfig().defaultListType === 'workitems'.
-       */
       workitems: {
         mapParams: (origParams) => mapUpsQueryParams(origParams, upsQueryOptions),
         search: async (origParams) => {
@@ -221,14 +201,12 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
         },
         processResults: (workitems) => (workitems || []).map(workitemToStudyRow),
       },
-
       series: dicomWebImpl.query.series,
       instances: dicomWebImpl.query.instances,
     },
 
     getConfig: () => ({
       ...dicomWebImpl.getConfig(),
-      /** Signals DataSourceWrapper to use query.workitems.search for the worklist */
       defaultListType: 'workitems',
     }),
 
