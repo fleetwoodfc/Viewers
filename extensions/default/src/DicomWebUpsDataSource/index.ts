@@ -65,7 +65,7 @@ function getUpsModality(workitem): string {
   // 5. Fall back to ModalitiesInStudy
   const modalitiesEl = workitem[TAG_MODALITIES_IN_STUDY];
   if (modalitiesEl && modalitiesEl.Value && modalitiesEl.Value.length) {
-    return modalitiesEl.Value.join('\\');
+    return modalitiesEl.Value.join('\');
   }
 
   return '';
@@ -213,6 +213,11 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
     return response.json();
   };
 
+  const upsQueryOptions = {
+    supportsFuzzyMatching: upsConfig.supportsFuzzyMatching,
+    supportsWildcard: upsConfig.supportsWildcard,
+  };
+
   const implementation = {
     ...dicomWebImpl,
 
@@ -228,25 +233,51 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
     },
 
     query: {
+      /**
+       * studies.search is kept as an alias for workitems.search so that the
+       * existing DataSourceWrapper (which calls dataSource.query.studies.search)
+       * continues to work with the UPS data source without modification.
+       */
       studies: {
-        mapParams: (origParams) =>
-          mapUpsQueryParams(origParams, {
-            supportsFuzzyMatching: upsConfig.supportsFuzzyMatching,
-            supportsWildcard: upsConfig.supportsWildcard,
-          }),
+        mapParams: (origParams) => mapUpsQueryParams(origParams, upsQueryOptions),
         search: async (origParams) => {
-          const mappedParams = mapUpsQueryParams(origParams, {
-            supportsFuzzyMatching: upsConfig.supportsFuzzyMatching,
-            supportsWildcard: upsConfig.supportsWildcard,
-          });
+          const mappedParams = mapUpsQueryParams(origParams, upsQueryOptions);
           const workitems = await upsGet('/workitems', mappedParams);
           return (workitems || []).map(workitemToStudyRow);
         },
         processResults: (workitems) => (workitems || []).map(workitemToStudyRow),
       },
+
+      /**
+       * workitems.search is the dedicated UPS-RS query namespace.
+       * Callers that are aware of workitems (e.g. a future UPS worklist panel)
+       * should prefer this over query.studies so the intent is explicit.
+       *
+       * The implementation is identical to studies.search - both hit the same
+       * UPS-RS /workitems endpoint and return the same normalised row objects -
+       * but having a separate namespace allows DataSourceWrapper (or any other
+       * consumer) to dispatch to the correct method based on
+       * dataSource.getConfig().defaultListType === 'workitems'.
+       */
+      workitems: {
+        mapParams: (origParams) => mapUpsQueryParams(origParams, upsQueryOptions),
+        search: async (origParams) => {
+          const mappedParams = mapUpsQueryParams(origParams, upsQueryOptions);
+          const workitems = await upsGet('/workitems', mappedParams);
+          return (workitems || []).map(workitemToStudyRow);
+        },
+        processResults: (workitems) => (workitems || []).map(workitemToStudyRow),
+      },
+
       series: dicomWebImpl.query.series,
       instances: dicomWebImpl.query.instances,
     },
+
+    getConfig: () => ({
+      ...dicomWebImpl.getConfig(),
+      /** Signals DataSourceWrapper to use query.workitems.search for the worklist */
+      defaultListType: 'workitems',
+    }),
 
     store: {
       ...dicomWebImpl.store,
