@@ -28,41 +28,28 @@ function getStr(tag: Record<string, any>, key: string): string {
 }
 
 function getUpsModality(workitem): string {
-  // 1. Try direct Modality tag (some servers include it, and it's in our includefield)
   const direct = getStr(workitem, '00080060');
-  if (direct) {
-    return direct;
-  }
+  if (direct) return direct;
 
-  // 2. Try ScheduledWorkitemCodeSequence > Code Meaning (00080104)
   const swcs = workitem['00404018']?.Value;
   if (swcs?.length) {
     const meaning = getString(swcs[0]['00080104']);
-    if (meaning) {
-      return meaning;
-    }
+    if (meaning) return meaning;
   }
 
-  // 3. Try InputInformationSequence (00404021) > Modality (00080060)
   const iis = workitem['00404021']?.Value;
   if (iis?.length) {
     const mod = getString(iis[0]['00080060']);
-    if (mod) {
-      return mod;
-    }
+    if (mod) return mod;
   }
 
-  // 4. Fall back to ScheduledStepAttributesSequence
   const seq = workitem[TAG_SCHEDULED_STEP_ATTR_SEQ];
   if (seq && seq.Value && seq.Value.length) {
     const item = seq.Value[0];
     const mod = item['00080060'];
-    if (mod && mod.Value && mod.Value.length) {
-      return String(mod.Value[0]);
-    }
+    if (mod && mod.Value && mod.Value.length) return String(mod.Value[0]);
   }
 
-  // 5. Fall back to ModalitiesInStudy
   const modalitiesEl = workitem[TAG_MODALITIES_IN_STUDY];
   if (modalitiesEl && modalitiesEl.Value && modalitiesEl.Value.length) {
     return modalitiesEl.Value.join('\');
@@ -83,19 +70,13 @@ function getStationClass(workitem): string {
 }
 
 function splitDateTime(dtString: string): { date: string; time: string } {
-  if (!dtString) {
-    return { date: '', time: '' };
-  }
-  // DT format: YYYYMMDDHHMMSS.FFFFFF
-  const date = dtString.substring(0, 8);
-  const time = dtString.substring(8);
-  return { date, time };
+  if (!dtString) return { date: '', time: '' };
+  return { date: dtString.substring(0, 8), time: dtString.substring(8) };
 }
 
 function workitemToStudyRow(workitem): Record<string, unknown> {
   const studyInstanceUID = getStr(workitem, TAG_STUDY_INSTANCE_UID);
-  const dtStr = getStr(workitem, TAG_SCHEDULED_PROC_STEP_START_DATETIME);
-  const { date, time } = splitDateTime(dtStr);
+  const { date, time } = splitDateTime(getStr(workitem, TAG_SCHEDULED_PROC_STEP_START_DATETIME));
 
   return {
     studyInstanceUid: studyInstanceUID,
@@ -122,9 +103,7 @@ function mapUpsQueryParams(
 ): Record<string, string> {
   const params: Record<string, string> = {};
 
-  if (!origParams) {
-    return params;
-  }
+  if (!origParams) return params;
 
   const {
     patientName,
@@ -137,12 +116,8 @@ function mapUpsQueryParams(
     studyInstanceUid,
   } = origParams;
 
-  if (patientName) {
-    params['00100010'] = options.supportsWildcard ? `*${patientName}*` : patientName;
-  }
-  if (patientId) {
-    params['00100020'] = patientId;
-  }
+  if (patientName) params['00100010'] = options.supportsWildcard ? `*${patientName}*` : patientName;
+  if (patientId) params['00100020'] = patientId;
   if (startDate && endDate) {
     params['00404005'] = `${startDate}-${endDate}`;
   } else if (startDate) {
@@ -150,17 +125,11 @@ function mapUpsQueryParams(
   } else if (endDate) {
     params['00404005'] = `-${endDate}`;
   }
-  if (studyDescription) {
-    params['00741204'] = options.supportsWildcard ? `*${studyDescription}*` : studyDescription;
-  }
-  if (accessionNumber) {
-    params['00080050'] = accessionNumber;
-  }
+  if (studyDescription) params['00741204'] = options.supportsWildcard ? `*${studyDescription}*` : studyDescription;
+  if (accessionNumber) params['00080050'] = accessionNumber;
   // _modalitiesInStudy omitted: Modality in UPS is nested within ScheduledStepAttributesSequence;
   // top-level QIDO filtering on ModalitiesInStudy (00080061) is not standard for UPS workitem queries.
-  if (studyInstanceUid) {
-    params['0020000D'] = studyInstanceUid;
-  }
+  if (studyInstanceUid) params['0020000D'] = studyInstanceUid;
 
   params['includefield'] = [
     '00100010', // PatientName
@@ -189,9 +158,7 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
   const getAuthorizationHeader = () => {
     const headers: Record<string, string> = {};
     const auth = userAuthenticationService.getAuthorizationHeader();
-    if (auth && auth.Authorization) {
-      headers.Authorization = auth.Authorization;
-    }
+    if (auth && auth.Authorization) headers.Authorization = auth.Authorization;
     return headers;
   };
 
@@ -204,12 +171,8 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
     const response = await fetch(url.toString(), {
       headers: { ...getAuthorizationHeader(), Accept: 'application/dicom+json' },
     });
-    if (response.status === 204) {
-      return [];
-    }
-    if (!response.ok) {
-      throw new Error(`UPS-RS [${response.status}]: ${url}`);
-    }
+    if (response.status === 204) return [];
+    if (!response.ok) throw new Error(`UPS-RS [${response.status}]: ${url}`);
     return response.json();
   };
 
@@ -234,29 +197,19 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
 
     query: {
       /**
-       * studies.search is kept as an alias for workitems.search so that the
-       * existing DataSourceWrapper (which calls dataSource.query.studies.search)
-       * continues to work with the UPS data source without modification.
+       * Inherit query.studies directly from DicomWebDataSource so that standard
+       * QIDO-RS study searches (e.g. prior studies in the study browser) continue
+       * to work unchanged against the configured qidoRoot.
        */
-      studies: {
-        mapParams: (origParams) => mapUpsQueryParams(origParams, upsQueryOptions),
-        search: async (origParams) => {
-          const mappedParams = mapUpsQueryParams(origParams, upsQueryOptions);
-          const workitems = await upsGet('/workitems', mappedParams);
-          return (workitems || []).map(workitemToStudyRow);
-        },
-        processResults: (workitems) => (workitems || []).map(workitemToStudyRow),
-      },
+      studies: dicomWebImpl.query.studies,
 
       /**
-       * workitems.search is the dedicated UPS-RS query namespace.
-       * Callers that are aware of workitems (e.g. a future UPS worklist panel)
-       * should prefer this over query.studies so the intent is explicit.
+       * query.workitems is the dedicated UPS-RS query namespace.
+       * It queries the UPS-RS /workitems endpoint and maps the resulting workitem
+       * attributes into the same normalised row shape used by the study list, so
+       * the existing Worklist UI can render them without changes.
        *
-       * The implementation is identical to studies.search - both hit the same
-       * UPS-RS /workitems endpoint and return the same normalised row objects -
-       * but having a separate namespace allows DataSourceWrapper (or any other
-       * consumer) to dispatch to the correct method based on
+       * DataSourceWrapper can be directed here via
        * dataSource.getConfig().defaultListType === 'workitems'.
        */
       workitems: {
@@ -286,15 +239,10 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
         const url = new URL(`${upsConfig.upsRoot}${path}`, window.location.origin);
         const response = await fetch(url.toString(), {
           method: 'POST',
-          headers: {
-            ...getAuthorizationHeader(),
-            'Content-Type': 'application/dicom+json',
-          },
+          headers: { ...getAuthorizationHeader(), 'Content-Type': 'application/dicom+json' },
           body: JSON.stringify(dataset),
         });
-        if (!response.ok) {
-          throw new Error(`UPS-RS workitem POST [${response.status}]: ${url}`);
-        }
+        if (!response.ok) throw new Error(`UPS-RS workitem POST [${response.status}]: ${url}`);
         return response;
       },
       changeState: async (workitemUID: string, state: string, transactionUID?: string) => {
@@ -302,23 +250,14 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
           `${upsConfig.upsRoot}/workitems/${workitemUID}/state`,
           window.location.origin
         );
-        const body: Record<string, unknown> = {
-          '00741000': { vr: 'CS', Value: [state] },
-        };
-        if (transactionUID) {
-          body['00081195'] = { vr: 'UI', Value: [transactionUID] };
-        }
+        const body: Record<string, unknown> = { '00741000': { vr: 'CS', Value: [state] } };
+        if (transactionUID) body['00081195'] = { vr: 'UI', Value: [transactionUID] };
         const response = await fetch(url.toString(), {
           method: 'PUT',
-          headers: {
-            ...getAuthorizationHeader(),
-            'Content-Type': 'application/dicom+json',
-          },
+          headers: { ...getAuthorizationHeader(), 'Content-Type': 'application/dicom+json' },
           body: JSON.stringify(body),
         });
-        if (!response.ok) {
-          throw new Error(`UPS-RS changeState PUT [${response.status}]: ${url}`);
-        }
+        if (!response.ok) throw new Error(`UPS-RS changeState PUT [${response.status}]: ${url}`);
         return response;
       },
       subscribe: async (workitemUID: string, aetitle: string) => {
@@ -330,9 +269,7 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
           method: 'POST',
           headers: getAuthorizationHeader(),
         });
-        if (!response.ok) {
-          throw new Error(`UPS-RS subscribe POST [${response.status}]: ${url}`);
-        }
+        if (!response.ok) throw new Error(`UPS-RS subscribe POST [${response.status}]: ${url}`);
         return response;
       },
     },
