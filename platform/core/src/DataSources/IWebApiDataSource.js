@@ -44,6 +44,22 @@ function create({
     },
     series: {},
     instances: {},
+    workitems: {
+      /**
+       * @param {string} params.patientName
+       * @param {string} params.patientId
+       * @param {string} params.accessionNumber
+       * @param {string} params.studyDescription
+       * @param {string} params.startDate
+       * @param {string} params.endDate
+       * @param {string} params.procedureStepState
+       * @param {number} params.limit
+       * @param {number} params.offset
+       */
+      mapParams: params => params,
+      search: async () => [],
+      processResults: results => results,
+    },
   };
 
   const defaultRetrieve = {
