@@ -88,7 +88,7 @@ window.config = {
       ],
     },
   ],
-  defaultDataSourceName: 'ohif',
+  defaultDataSourceName: 'ups',
   /* Dynamic config allows user to pass "configUrl" query string this allows to load config without recompiling application. The regex will ensure valid configuration source */
   // dangerouslyUseDynamicConfig: {
   //   enabled: true,
@@ -286,9 +286,11 @@ window.config = {
       configuration: {
         friendlyName: 'UPS-RS Worklist',
         name: 'UPS',
-        upsRoot: 'https://d14fa38qiwhyfd.cloudfront.net/dicomweb',
-        qidoRoot: 'https://d14fa38qiwhyfd.cloudfront.net/dicomweb',
-        wadoRoot: 'https://d14fa38qiwhyfd.cloudfront.net/dicomweb',
+        worklistLabel: 'Reporting',
+        upsRoot: 'http://192.168.1.12:8080/dcm4chee-arc/aets/WORKLIST/rs', // UPS-RS endpoint (workitem queries)
+        wadoUriRoot: 'http://192.168.1.12:8080/dcm4chee-arc/aets/DCM4CHEE/wado',
+        qidoRoot: 'http://192.168.1.12:8080http://192.168.1.12:8080/dcm4chee-arc/aets/DCM4CHEE/rs', // QIDO-RS endpoint (series/instances)
+        wadoRoot: 'http://192.168.1.12:8080/dcm4chee-arc/aets/DCM4CHEE/rs', // WADO-RS endpoint (retrieve)
         supportsFuzzyMatching: true,
         supportsWildcard: false,
         staticWado: true,

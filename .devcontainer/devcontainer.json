@@ -13,7 +13,8 @@
       "label": "Orthanc"
     }
   },
-  "postCreateCommand": "yarn install --frozen-lockfile",
+  "postStartCommand": "sudo chown -R node:node /workspaces/Viewers/node_modules",
+  "postCreateCommand": "CYPRESS_INSTALL_BINARY=0 yarn install --frozen-lockfile",
   "remoteUser": "node",
   "mounts": [
     "source=ohif-viewers-node-modules,target=/workspaces/Viewers/node_modules,type=volume"

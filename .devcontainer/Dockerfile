@@ -1,4 +1,4 @@
-FROM node:20.9.0-bookworm
+FROM node:20.19.0-bookworm
 
 # Install system dependencies needed for Playwright/Cypress browser testing and general development
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libssl-dev \
     ca-certificates \
+    sudo \
     # Playwright/Chromium dependencies
     libnss3 \
     libatk1.0-0 \
@@ -26,8 +27,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpangocairo-1.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Yarn 1.22.22 globally
-RUN npm install -g yarn@1.22.22
+# Install Yarn 1.22.22 globally (disable corepack shim first to avoid EEXIST conflict)
+RUN corepack disable && npm install -g yarn@1.22.22
 
 # Install Bun globally (latest stable) and make it accessible to all users
 RUN curl -fsSL https://bun.sh/install | bash \
@@ -36,6 +37,13 @@ RUN curl -fsSL https://bun.sh/install | bash \
 
 # Install Playwright browser dependencies
 RUN npx --yes playwright install-deps chromium
+
+# Allow node user to chown the node_modules volume without a password
+RUN echo "node ALL=(root) NOPASSWD: /bin/chown -R node\:node /workspaces/Viewers/node_modules" \
+    > /etc/sudoers.d/node-chown && chmod 0440 /etc/sudoers.d/node-chown
+
+# Ensure the workdir and node_modules dir are owned by the node user
+RUN mkdir -p /workspaces/Viewers/node_modules && chown -R node:node /workspaces
 
 WORKDIR /workspaces/Viewers
 
