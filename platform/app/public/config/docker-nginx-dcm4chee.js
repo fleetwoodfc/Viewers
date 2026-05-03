@@ -33,9 +33,13 @@ window.config = {
   configuration: {
     friendlyName: 'UPS-RS Worklist',
     name: 'UPS',
+    worklistLabel: 'Reporting',
     upsRoot: '/dcm4chee-arc/aets/WORKLIST/rs',   // UPS-RS endpoint (workitem queries)
+    wadoUriRoot: '/dcm4chee-arc/aets/DCM4CHEE/wado',
     qidoRoot: '/dcm4chee-arc/aets/DCM4CHEE/rs',  // QIDO-RS endpoint (series/instances)
     wadoRoot: '/dcm4chee-arc/aets/DCM4CHEE/rs',  // WADO-RS endpoint (retrieve)
+    defaultListType: 'workitems',
+
     supportsFuzzyMatching: true,
     supportsWildcard: true,
     omitQuotationForMultipartRequest: true,
