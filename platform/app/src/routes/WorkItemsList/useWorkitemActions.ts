@@ -41,7 +41,13 @@ export function useWorkitemActions({
 }: UseWorkitemActionsOptions): UseWorkitemActionsReturn {
   // Maps workitem UID → Transaction UID for workitems claimed in this session.
   // Kept as a ref so async callbacks always read the latest value.
+  // Also written to sessionStorage so the mapping survives a page refresh
+  // within the same browser tab.  The SCU is the authoritative source of the
+  // Transaction UID — the SCP does not reliably echo it back via GET.
   const claimedWorkitemsRef = useRef<Map<string, string>>(new Map());
+
+  /** sessionStorage key for a given workitem UID. */
+  const sessionKey = (uid: string) => `ups_txuid_${uid}`;
   const [actionStates, setActionStates] = useState<Map<string, WorkitemActionState>>(new Map());
 
   const setActionState = useCallback((uid: string, state: WorkitemActionState) => {
@@ -62,32 +68,40 @@ export function useWorkitemActions({
   );
 
   /**
-   * Resolve the Transaction UID for a workitem.  Uses the in-session cache
-   * first; falls back to a single-item GET from the SCP (e.g. after refresh).
-   * Throws if the UID cannot be determined so callers surface the error.
+   * Resolve the Transaction UID for a workitem.
+   *
+   * The SCU is the authoritative source of the Transaction UID — the SCP
+   * (e.g. dcm4chee-arc) treats it as an opaque lock token and does not
+   * reliably return it in GET responses.  Resolution order:
+   *   1. In-memory ref (hot path, same render cycle as claim)
+   *   2. sessionStorage (survives page refresh within the same tab)
+   *   3. Throw — the UID cannot be recovered; surface the error to the user.
+   *
+   * Throws if the UID cannot be determined so callers never proceed silently.
    */
   const resolveTxUID = useCallback(
-    async (uid: string): Promise<string> => {
+    (uid: string): string => {
       const cached = claimedWorkitemsRef.current.get(uid);
       if (cached) return cached;
-      let item: Record<string, any>;
+
+      // Try sessionStorage (cross-refresh within the same tab)
       try {
-        item = (await dataSource.retrieve.workitem(uid)) as Record<string, any>;
-      } catch (err) {
-        throw new Error(`Could not retrieve workitem ${uid}: ${(err as Error).message}`);
+        const stored = sessionStorage.getItem(sessionKey(uid));
+        if (stored) {
+          // Re-hydrate the in-memory cache for subsequent calls
+          claimedWorkitemsRef.current.set(uid, stored);
+          return stored;
+        }
+      } catch {
+        // sessionStorage may be unavailable (private browsing, storage quota)
       }
-      const txUID = item?.['00081195']?.Value?.[0] as string | undefined;
-      if (!txUID) {
-        throw new Error(
-          'Transaction UID (00081195) not found on workitem. ' +
-            'The item may have been claimed by a different performer, or the server did not return it.'
-        );
-      }
-      // Cache it for subsequent actions in this session
-      claimedWorkitemsRef.current.set(uid, txUID);
-      return txUID;
+
+      throw new Error(
+        `Transaction UID for workitem ${uid} is not available in this session. ` +
+          'The workitem may have been claimed in a different browser tab or session.'
+      );
     },
-    [dataSource]
+    []
   );
 
   const claim = useCallback(
@@ -97,6 +111,8 @@ export function useWorkitemActions({
       try {
         await dataSource.store.changeState(uid, 'IN PROGRESS', txUID);
         claimedWorkitemsRef.current.set(uid, txUID);
+        // Persist so the mapping survives a page refresh in this tab
+        try { sessionStorage.setItem(sessionKey(uid), txUID); } catch { /* quota/private */ }
         uiNotificationService.show({
           title: 'Workitem Claimed',
           message: 'The workitem is now IN PROGRESS.',
@@ -124,7 +140,7 @@ export function useWorkitemActions({
     async (uid: string): Promise<void> => {
       setActionState(uid, 'completing');
       try {
-        const txUID = await resolveTxUID(uid);
+        const txUID = resolveTxUID(uid);
         // DICOM PS3.3 C.30.3 — Procedure Step End DateTime (0040,4051) is a
         // nested attribute inside Unified Procedure Step Performed Procedure
         // Sequence (0074,1216). Must be set before the SCP will accept a
@@ -146,6 +162,7 @@ export function useWorkitemActions({
         );
         await dataSource.store.changeState(uid, 'COMPLETED', txUID);
         claimedWorkitemsRef.current.delete(uid);
+        try { sessionStorage.removeItem(sessionKey(uid)); } catch { /* quota/private */ }
         uiNotificationService.show({
           title: 'Workitem Completed',
           message: 'The workitem has been marked COMPLETED.',
@@ -172,12 +189,13 @@ export function useWorkitemActions({
     async (uid: string, reason?: string): Promise<void> => {
       setActionState(uid, 'canceling');
       try {
-        const txUID = await resolveTxUID(uid);
+        const txUID = resolveTxUID(uid);
         const extraAttributes = reason
           ? { '00741238': { vr: 'LO', Value: [reason.substring(0, 256)] } }
           : undefined;
         await dataSource.store.changeState(uid, 'CANCELED', txUID, extraAttributes);
         claimedWorkitemsRef.current.delete(uid);
+        try { sessionStorage.removeItem(sessionKey(uid)); } catch { /* quota/private */ }
         uiNotificationService.show({
           title: 'Workitem Canceled',
           message: 'The workitem has been marked CANCELED.',

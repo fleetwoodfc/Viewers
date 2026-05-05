@@ -1,27 +1,29 @@
 /**
  * T028 — unit tests for the `resolveTxUID` helper inside `useWorkitemActions`.
  *
- * `resolveTxUID` is an internal callback and therefore tested indirectly
- * through `complete` and `cancel`, which both call it before every
- * state-change request.
+ * `resolveTxUID` is an internal function and is tested indirectly through
+ * `complete` and `cancel`, which both call it before every state-change request.
  *
- * Coverage required by T028:
- *   (a) Cache hit  — UID is already in `claimedWorkitemsRef`; SCP GET is
- *                    never called.
- *   (b) Cache miss — `claimedWorkitemsRef` is empty (e.g. after page refresh);
- *                    the hook calls `dataSource.retrieve.workitem(uid)` and
- *                    reads tag 00081195.
- *   (c) 00081195 absent — SCP returns the workitem but the tag is missing;
- *                    the hook throws a descriptive error.
+ * The SCU is the authoritative source of the Transaction UID.  The SCP does
+ * NOT reliably echo it back (dcm4chee-arc does not return tag 00081195 in GET
+ * responses).  Resolution order:
+ *
+ *   (a) In-memory ref  — UID is in `claimedWorkitemsRef` from this render cycle
+ *   (b) sessionStorage — UID was persisted during a prior claim in this tab;
+ *                        survives a page refresh
+ *   (c) Neither found  — throw a descriptive error; surface as an error toast
  */
 
 import { renderHook, act } from '@testing-library/react';
 import { useWorkitemActions } from './useWorkitemActions';
 
-// ─── environment polyfill ────────────────────────────────────────────────────
+// ─── environment polyfills ───────────────────────────────────────────────────
 
-// jsdom does not provide crypto.randomUUID — polyfill for test (a)
+// jsdom does not provide crypto.randomUUID — polyfill
 const MOCK_UUID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+// Deterministic DICOM UID produced by uuidToDicomUID(MOCK_UUID)
+const MOCK_DICOM_UID = '2.25.' + BigInt('0x' + MOCK_UUID.replace(/-/g, '')).toString(10);
+
 beforeAll(() => {
   if (typeof crypto === 'undefined' || !crypto.randomUUID) {
     Object.defineProperty(globalThis, 'crypto', {
@@ -30,28 +32,31 @@ beforeAll(() => {
       configurable: true,
     });
   } else {
-    jest.spyOn(crypto, 'randomUUID').mockReturnValue(MOCK_UUID as `${string}-${string}-${string}-${string}-${string}`);
+    jest.spyOn(crypto, 'randomUUID').mockReturnValue(
+      MOCK_UUID as `${string}-${string}-${string}-${string}-${string}`
+    );
   }
 });
+
+// Clear sessionStorage between tests to avoid cross-test leakage
+beforeEach(() => sessionStorage.clear());
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 const UID = 'workitem-uid-001';
-const TX_UID = '2.25.12345678901234567890';
+const SESSION_KEY = `ups_txuid_${UID}`;
+const PERSISTED_TX_UID = '2.25.99999999999999999999';
 
-function makeDataSource(overrides: Record<string, unknown> = {}) {
+function makeDataSource() {
   return {
     retrieve: {
-      workitem: jest.fn().mockResolvedValue({
-        '00081195': { Value: [TX_UID] },
-      }),
+      workitem: jest.fn().mockResolvedValue({ '00081195': { Value: ['should-not-be-called'] } }),
     },
     store: {
       changeState: jest.fn().mockResolvedValue(undefined),
       updateWorkitem: jest.fn().mockResolvedValue(undefined),
       cancelWorkitem: jest.fn().mockResolvedValue(undefined),
     },
-    ...overrides,
   };
 }
 
@@ -64,144 +69,143 @@ function makeNotificationService() {
 describe('useWorkitemActions — resolveTxUID (T028)', () => {
   /**
    * (a) Cache hit: after a successful `claim`, the Transaction UID is stored
-   * in `claimedWorkitemsRef`. A subsequent `complete` MUST use that cached
-   * value and MUST NOT issue a GET request.
+   * in `claimedWorkitemsRef`.  A subsequent `complete` MUST use that in-memory
+   * value without touching sessionStorage or retrieve.workitem.
    */
-  it('(a) cache hit — uses claimedWorkitemsRef; does NOT call retrieve.workitem', async () => {
+  it('(a) cache hit — uses in-memory ref; does not call retrieve.workitem', async () => {
     const dataSource = makeDataSource();
-    const onRefresh = jest.fn();
-    const uiNotificationService = makeNotificationService();
-
     const { result } = renderHook(() =>
-      useWorkitemActions({ dataSource, onRefresh, uiNotificationService })
+      useWorkitemActions({ dataSource, onRefresh: jest.fn(), uiNotificationService: makeNotificationService() })
     );
 
-    // Claim populates the cache
-    await act(async () => {
-      await result.current.claim(UID);
-    });
+    // Claim populates the in-memory cache
+    await act(async () => { await result.current.claim(UID); });
 
-    // The claim called changeState once; retrieve.workitem not called
     expect(dataSource.store.changeState).toHaveBeenCalledTimes(1);
     expect(dataSource.retrieve.workitem).not.toHaveBeenCalled();
 
-    // Complete should use the cached txUID — no GET needed
-    await act(async () => {
-      await result.current.complete(UID);
-    });
+    // Complete uses the cached txUID — no SCP GET needed
+    await act(async () => { await result.current.complete(UID); });
 
     expect(dataSource.retrieve.workitem).not.toHaveBeenCalled();
-    // changeState called a second time (for COMPLETED)
+    // Second changeState call is for COMPLETED
     expect(dataSource.store.changeState).toHaveBeenCalledTimes(2);
+    expect(dataSource.store.changeState).toHaveBeenLastCalledWith(UID, 'COMPLETED', MOCK_DICOM_UID);
   });
 
   /**
-   * (b) Cache miss: the session cache is cold (no prior claim in this session,
-   * e.g. after page refresh). `complete` must fall back to
-   * `dataSource.retrieve.workitem(uid)` and read tag 00081195.
+   * (b) sessionStorage hit: the in-memory ref is cold (simulated page refresh)
+   * but a prior claim wrote the txUID to sessionStorage.  `complete` MUST
+   * read it from sessionStorage and proceed without SCP GET.
    */
-  it('(b) cache miss — calls retrieve.workitem and reads tag 00081195', async () => {
-    const dataSource = makeDataSource();
-    const onRefresh = jest.fn();
-    const uiNotificationService = makeNotificationService();
+  it('(b) sessionStorage hit — reads from sessionStorage; does not call retrieve.workitem', async () => {
+    sessionStorage.setItem(SESSION_KEY, PERSISTED_TX_UID);
 
+    const dataSource = makeDataSource();
     const { result } = renderHook(() =>
-      useWorkitemActions({ dataSource, onRefresh, uiNotificationService })
+      useWorkitemActions({ dataSource, onRefresh: jest.fn(), uiNotificationService: makeNotificationService() })
     );
 
-    // Do NOT call claim — cache is cold
-    await act(async () => {
-      await result.current.complete(UID);
-    });
+    // Do NOT call claim — memory cache is cold
+    await act(async () => { await result.current.complete(UID); });
 
-    // Must have called retrieve.workitem to get the txUID
-    expect(dataSource.retrieve.workitem).toHaveBeenCalledWith(UID);
-    // And then proceeded to call updateWorkitem + changeState
+    expect(dataSource.retrieve.workitem).not.toHaveBeenCalled();
     expect(dataSource.store.updateWorkitem).toHaveBeenCalled();
-    expect(dataSource.store.changeState).toHaveBeenCalledWith(UID, 'COMPLETED', TX_UID);
+    expect(dataSource.store.changeState).toHaveBeenCalledWith(UID, 'COMPLETED', PERSISTED_TX_UID);
   });
 
   /**
-   * (b2) Cache miss via cancel: same fallback through a different caller.
+   * (b2) sessionStorage hit via cancel: same fallback path, different caller.
    */
-  it('(b2) cache miss via cancel — calls retrieve.workitem and reads tag 00081195', async () => {
-    const dataSource = makeDataSource();
-    const onRefresh = jest.fn();
-    const uiNotificationService = makeNotificationService();
+  it('(b2) sessionStorage hit via cancel — reads from sessionStorage; proceeds to changeState', async () => {
+    sessionStorage.setItem(SESSION_KEY, PERSISTED_TX_UID);
 
+    const dataSource = makeDataSource();
     const { result } = renderHook(() =>
-      useWorkitemActions({ dataSource, onRefresh, uiNotificationService })
+      useWorkitemActions({ dataSource, onRefresh: jest.fn(), uiNotificationService: makeNotificationService() })
     );
 
-    await act(async () => {
-      await result.current.cancel(UID, 'test reason');
-    });
+    await act(async () => { await result.current.cancel(UID, 'test reason'); });
 
-    expect(dataSource.retrieve.workitem).toHaveBeenCalledWith(UID);
+    expect(dataSource.retrieve.workitem).not.toHaveBeenCalled();
     expect(dataSource.store.changeState).toHaveBeenCalledWith(
       UID,
       'CANCELED',
-      TX_UID,
+      PERSISTED_TX_UID,
       expect.objectContaining({ '00741238': expect.anything() })
     );
   });
 
   /**
-   * (c) Tag 00081195 absent: SCP returns the workitem but the Transaction UID
-   * tag is missing. `resolveTxUID` must throw a descriptive error; the hook
-   * must surface it as an error notification and NOT call changeState.
+   * (b3) Claim → sessionStorage cleanup: completing a workitem MUST remove
+   * its entry from sessionStorage so stale txUIDs cannot be reused.
    */
-  it('(c) 00081195 absent — throws and shows error notification; does not call changeState', async () => {
-    const dataSource = makeDataSource({
-      retrieve: {
-        workitem: jest.fn().mockResolvedValue({
-          // 00081195 deliberately absent
-          '00100020': { Value: ['PATIENT001'] },
-        }),
-      },
-    });
-    const onRefresh = jest.fn();
-    const uiNotificationService = makeNotificationService();
-
+  it('(b3) complete removes the txUID from sessionStorage', async () => {
+    const dataSource = makeDataSource();
     const { result } = renderHook(() =>
-      useWorkitemActions({ dataSource, onRefresh, uiNotificationService })
+      useWorkitemActions({ dataSource, onRefresh: jest.fn(), uiNotificationService: makeNotificationService() })
     );
 
-    await act(async () => {
-      await result.current.complete(UID);
-    });
+    await act(async () => { await result.current.claim(UID); });
+    expect(sessionStorage.getItem(SESSION_KEY)).not.toBeNull();
 
-    // changeState must NOT have been called — the action aborted
-    expect(dataSource.store.changeState).not.toHaveBeenCalled();
-
-    // An error notification must have been shown
-    expect(uiNotificationService.show).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error' })
-    );
-    const notification = uiNotificationService.show.mock.calls[0][0];
-    expect(notification.message).toMatch(/Transaction UID.*00081195|00081195.*Transaction UID/i);
+    await act(async () => { await result.current.complete(UID); });
+    expect(sessionStorage.getItem(SESSION_KEY)).toBeNull();
   });
 
   /**
-   * (c2) SCP GET itself fails (network error): must show an error notification
-   * and not call changeState.
+   * (b4) Cancel also removes the txUID from sessionStorage.
    */
-  it('(c2) retrieve.workitem throws — shows error notification; does not call changeState', async () => {
-    const dataSource = makeDataSource({
-      retrieve: {
-        workitem: jest.fn().mockRejectedValue(new Error('Network timeout')),
-      },
-    });
-    const onRefresh = jest.fn();
+  it('(b4) cancel removes the txUID from sessionStorage', async () => {
+    const dataSource = makeDataSource();
+    const { result } = renderHook(() =>
+      useWorkitemActions({ dataSource, onRefresh: jest.fn(), uiNotificationService: makeNotificationService() })
+    );
+
+    await act(async () => { await result.current.claim(UID); });
+    expect(sessionStorage.getItem(SESSION_KEY)).not.toBeNull();
+
+    await act(async () => { await result.current.cancel(UID); });
+    expect(sessionStorage.getItem(SESSION_KEY)).toBeNull();
+  });
+
+  /**
+   * (c) Neither memory nor sessionStorage has the txUID (e.g. workitem was
+   * claimed in a different tab, or sessionStorage was cleared).
+   * `resolveTxUID` MUST throw and the hook MUST surface an error notification
+   * without calling changeState.
+   */
+  it('(c) no txUID available — shows error notification; does not call changeState', async () => {
+    // sessionStorage is empty (cleared in beforeEach); no prior claim
+    const dataSource = makeDataSource();
     const uiNotificationService = makeNotificationService();
 
     const { result } = renderHook(() =>
-      useWorkitemActions({ dataSource, onRefresh, uiNotificationService })
+      useWorkitemActions({ dataSource, onRefresh: jest.fn(), uiNotificationService })
     );
 
-    await act(async () => {
-      await result.current.complete(UID);
-    });
+    await act(async () => { await result.current.complete(UID); });
+
+    expect(dataSource.store.changeState).not.toHaveBeenCalled();
+    expect(uiNotificationService.show).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error' })
+    );
+    const { message } = uiNotificationService.show.mock.calls[0][0];
+    expect(message).toMatch(/Transaction UID/i);
+  });
+
+  /**
+   * (c2) Same guard for cancel when txUID is missing.
+   */
+  it('(c2) cancel with no txUID — shows error notification; does not call changeState', async () => {
+    const dataSource = makeDataSource();
+    const uiNotificationService = makeNotificationService();
+
+    const { result } = renderHook(() =>
+      useWorkitemActions({ dataSource, onRefresh: jest.fn(), uiNotificationService })
+    );
+
+    await act(async () => { await result.current.cancel(UID, 'reason'); });
 
     expect(dataSource.store.changeState).not.toHaveBeenCalled();
     expect(uiNotificationService.show).toHaveBeenCalledWith(
@@ -209,3 +213,4 @@ describe('useWorkitemActions — resolveTxUID (T028)', () => {
     );
   });
 });
+

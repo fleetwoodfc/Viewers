@@ -123,7 +123,7 @@ description: "Task list for WorkItems List — Task Performer Actions"
 - [X] T025 [P] Add button loading/disabled visual styles in `WorkItemActionsPanel.tsx` using Tailwind classes consistent with existing OHIF button patterns (`@ohif/ui-next` Button component or equivalent `className` approach)
 - [X] T026 Verify existing WorkItemsList features are unaffected: manually test filter, sort, pagination, study launch buttons, and DICOM tag browser with the Actions column present (SC-006 regression guard)
 - [X] T027 [P] Update `WorkItemsList.tsx` grid column total to account for the new Actions column (adjust existing `gridCol` values if the total exceeds the layout container)
-- [X] T028 [P] Implement `resolveTxUID(uid)` in `useWorkitemActions.ts`: check `claimedWorkitemsRef` first (session cache); on cache miss call `dataSource.retrieve.workitem(uid)` and read tag `00081195`; cache the result; throw with a descriptive error if the UID is absent (workitem not claimed by this performer or server did not return it).  Add unit tests covering: (a) cache hit returns immediately, (b) cache miss triggers GET and returns UID, (c) GET returns no `00081195` → throws.
+- [X] T028 [P] Implement `resolveTxUID(uid)` in `useWorkitemActions.ts`: (1) check `claimedWorkitemsRef` first; (2) on miss, read `sessionStorage.getItem('ups_txuid_${uid}')` and re-hydrate the ref; (3) throw a descriptive error if neither resolves.  Also persist to `sessionStorage` on successful `claim` and remove on `complete`/`cancel`.  Add unit tests covering: (a) in-memory cache hit, (b) sessionStorage hit after simulated refresh, (b3/b4) cleanup on complete/cancel, (c) no UID → error notification without calling changeState.
 
 ---
 

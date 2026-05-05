@@ -11,7 +11,7 @@ Extend the existing OHIF WorkItems List screen with IHE RAD RRR-WF Task Performe
 
 **Language/Version**: TypeScript 5.x / React 18.3.1
 **Primary Dependencies**: `@ohif/ui-next` 3.13.0-beta.64, `@ohif/ui` 3.13.0-beta.64, `@ohif/core` 3.13.0-beta.64, Tailwind CSS 3.2.4, React Router v6
-**Storage**: SCP is authoritative for Transaction UIDs (stored on the workitem as tag `00081195`).  The client uses a session-scoped `useRef` map as a write-through cache; on cache miss (e.g., after page refresh) the UID is fetched via `GET /workitems/{uid}` and re-cached.
+**Storage**: The SCU is the authoritative source of Transaction UIDs.  The SCP (e.g. dcm4chee-arc) treats the Transaction UID as an opaque lock token and does not reliably return it in `GET /workitems/{uid}` responses.  The client stores the UID in a session-scoped `useRef` map (hot path) and mirrors it to `sessionStorage` so it survives a page refresh within the same tab.  If neither cache has the UID (e.g. different tab, storage cleared), Complete/Cancel surface a descriptive error toast.
 **Testing**: Jest + jsdom, `@testing-library/react`
 **Target Platform**: Desktop web browser (OHIF Viewer web application)
 **Project Type**: Web application feature (React component extension within monorepo)
