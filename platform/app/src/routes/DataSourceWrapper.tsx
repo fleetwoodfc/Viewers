@@ -130,7 +130,7 @@ function DataSourceWrapper(props: withAppTypes) {
       setIsLoading(true);
       log.time(Enums.TimingEnum.SEARCH_TO_LIST);
 
-      const listType = dataSource.getConfig()?.defaultListType ?? 'studies';
+      const listType = props.forcedListType ?? 'studies';
       const queryNS = dataSource.query[listType] ?? dataSource.query.studies;
       const studies = await queryNS.search(queryFilterValues);
 
@@ -154,7 +154,8 @@ function DataSourceWrapper(props: withAppTypes) {
       const newOffset =
         Math.floor(
           (queryFilterValues.pageNumber * queryFilterValues.resultsPerPage) / STUDIES_LIMIT
-        ) * (STUDIES_LIMIT - 1);
+        ) *
+        (STUDIES_LIMIT - 1);
       const isLocationUpdated =
         typeof data.location === 'string' || !areLocationsTheSame(data.location, location);
       const isDataInvalid =
@@ -235,6 +236,8 @@ function _getQueryFilterValues(query, queryLimit) {
     accessionNumber: query.get('accession'),
     startDate: query.get('startdate'),
     endDate: query.get('enddate'),
+    priority: query.get('priority')?.split(',').filter(Boolean) || undefined,
+    procedureStepState: query.get('procedurestepstate')?.split(',').filter(Boolean) || undefined,
     page: _tryParseInt(query.get('page'), undefined),
     pageNumber,
     resultsPerPage,

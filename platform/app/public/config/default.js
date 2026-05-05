@@ -8,6 +8,9 @@ window.config = {
   modes: [],
   customizationService: {},
   showStudyList: true,
+  // Set to true to show the Work Items list (UPS worklist) instead of or alongside the Study List.
+  // Requires a DicomWebUps data source (dicomwebups) to be configured.
+  showWorkItemsList: true,
   // some windows systems have issues with more than 3 web workers
   maxNumberOfWebWorkers: 3,
   // below flag is for performance reasons, but it might not work for all servers
@@ -128,17 +131,6 @@ window.config = {
         omitQuotationForMultipartRequest: true,
       },
     },
-{
-  namespace: '@ohif/extension-default.dataSourcesModule.dicomwebups',
-  sourceName: 'ups',
-  configuration: {
-    friendlyName: 'UPS-RS Worklist',
-    name: 'UPS',
-    upsRoot: 'https://your-pacs-server/rs',  // ← your UPS-RS base URL
-    supportsFuzzyMatching: true,
-    supportsWildcard: true,
-  },
-},
     {
       namespace: '@ohif/extension-default.dataSourcesModule.dicomweb',
       sourceName: 'ohif2',
@@ -296,9 +288,13 @@ window.config = {
       configuration: {
         friendlyName: 'UPS-RS Worklist',
         name: 'UPS',
-        upsRoot: 'https://d14fa38qiwhyfd.cloudfront.net/dicomweb',
-        qidoRoot: 'https://d14fa38qiwhyfd.cloudfront.net/dicomweb',
-        wadoRoot: 'https://d14fa38qiwhyfd.cloudfront.net/dicomweb',
+        worklistLabel: 'Reporting',
+        upsRoot: '/ups/dcm4chee-arc/aets/WORKLIST/rs', // UPS-RS endpoint (workitem queries)
+        performerAeTitle: 'WORKLIST_SCU', // AE title of this performer station — enables Reject button and dcm4chee-arc state URL suffix
+        wadoUriRoot: '/ups/dcm4chee-arc/aets/DCM4CHEE/wado',
+        qidoRoot: '/ups/dcm4chee-arc/aets/DCM4CHEE/rs', // QIDO-RS endpoint (series/instances)
+        wadoRoot: '/ups/dcm4chee-arc/aets/DCM4CHEE/rs', // WADO-RS endpoint (retrieve)
+        defaultListType: 'workitems',
         supportsFuzzyMatching: true,
         supportsWildcard: false,
         staticWado: true,

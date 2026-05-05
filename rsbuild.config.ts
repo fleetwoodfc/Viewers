@@ -22,6 +22,7 @@ const PROXY_TARGET = process.env.PROXY_TARGET;
 const PROXY_DOMAIN = process.env.PROXY_DOMAIN;
 const PROXY_PATH_REWRITE_FROM = process.env.PROXY_PATH_REWRITE_FROM;
 const PROXY_PATH_REWRITE_TO = process.env.PROXY_PATH_REWRITE_TO;
+const UPS_PROXY_TARGET = process.env.UPS_PROXY_TARGET || 'http://localhost:8080';
 
 // Add port constant
 const OHIF_PORT = Number(process.env.OHIF_PORT || 3000);
@@ -138,6 +139,14 @@ export default defineConfig({
     proxy: {
       '/dicomweb': {
         target: 'http://localhost:5000',
+      },
+      // UPS-RS proxy: forwards /ups/** → UPS_PROXY_TARGET (strips the /ups prefix).
+      // Set UPS_PROXY_TARGET env var to override, e.g.:
+      //   UPS_PROXY_TARGET=http://192.168.1.12:8080 yarn dev
+      '/ups': {
+        target: UPS_PROXY_TARGET,
+        changeOrigin: true,
+        pathRewrite: { '^/ups': '' },
       },
       // Add conditional proxy based on env vars
       ...(PROXY_TARGET && PROXY_DOMAIN

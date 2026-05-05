@@ -30,8 +30,12 @@ function ViewerHeader({ appConfig }: withAppTypes<{ appConfig: AppTypes.Config }
     }
     preserveQueryParameters(searchQuery);
 
+    // Honour an explicit returnTo parameter (e.g. when launched from WorkItemsList)
+    const currentSearch = new URLSearchParams(location.search);
+    const returnTo = currentSearch.get('returnTo');
+
     navigate({
-      pathname: '/',
+      pathname: returnTo || '/',
       search: decodeURIComponent(searchQuery.toString()),
     });
   };

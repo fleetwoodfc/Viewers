@@ -91,7 +91,8 @@ function App({
 
   // Set appConfig
   const appConfigState = init.appConfig;
-  const { routerBasename, modes, dataSources, oidc, showStudyList } = appConfigState;
+  const { routerBasename, modes, dataSources, oidc, showStudyList, showWorkItemsList } =
+    appConfigState;
 
   // get the maximum 3D texture size
   const canvas = document.createElement('canvas');
@@ -155,6 +156,7 @@ function App({
     hotkeysManager,
     routerBasename,
     showStudyList,
+    showWorkItemsList,
   });
 
   if (oidc) {
@@ -190,6 +192,7 @@ App.propTypes = {
       extensions: PropTypes.array,
       showLoadingIndicator: PropTypes.bool,
       showStudyList: PropTypes.bool,
+      showWorkItemsList: PropTypes.bool,
       modes: PropTypes.array,
       dataSources: PropTypes.array,
     }),

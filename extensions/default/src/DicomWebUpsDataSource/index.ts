@@ -5,6 +5,13 @@ import { createDicomWebApi, DicomWebConfig } from '../DicomWebDataSource/index';
 export type UpsConfig = DicomWebConfig & {
   /** Base URL for UPS-RS endpoint, e.g. /rs */
   upsRoot: string;
+  /**
+   * AE title of this performer station.
+   * When set: enables the "Reject" button on assigned workitems (FR-006)
+   * and the real-time WebSocket notification channel (FR-011).
+   * When absent: Reject button is hidden; WebSocket is not opened.
+   */
+  performerAeTitle?: string;
 };
 
 // DICOM Tag constants for UPS workitem attributes
@@ -17,6 +24,7 @@ const TAG_PATIENT_ID = '00100020';
 const TAG_PATIENT_BIRTHDATE = '00100030';
 const TAG_PATIENT_SEX = '00100040';
 const TAG_ACCESSION_NUMBER = '00080050';
+const TAG_SCHEDULED_PROC_STEP_PRIORITY = '00741200';
 const TAG_SPS_DESCRIPTION = '00741204';
 const TAG_INSTITUTION_NAME = '00080080';
 const TAG_INSTANCES_NUMBER = '00201208';
@@ -27,7 +35,7 @@ function getStr(tag: Record<string, any>, key: string): string {
   return getString(tag[key]) ?? '';
 }
 
-function getUpsModality(workitem): string {
+function getUpsModality(workitem: Record<string, any>): string {
   const direct = getStr(workitem, '00080060');
   if (direct) return direct;
 
@@ -58,7 +66,7 @@ function getUpsModality(workitem): string {
   return '';
 }
 
-function getStationClass(workitem): string {
+function getStationClass(workitem: Record<string, any>): string {
   const seq = workitem[TAG_SCHEDULED_STATION_CLASS_CODE_SEQ]?.Value;
   if (seq?.length) {
     const meaning = getString(seq[0]['00080104']);
@@ -74,7 +82,7 @@ function splitDateTime(dtString: string): { date: string; time: string } {
   return { date: dtString.substring(0, 8), time: dtString.substring(8) };
 }
 
-function workitemToStudyRow(workitem): Record<string, unknown> {
+function workitemToStudyRow(workitem: Record<string, any>): Record<string, unknown> {
   const studyInstanceUID = getStr(workitem, TAG_STUDY_INSTANCE_UID);
   const { date, time } = splitDateTime(getStr(workitem, TAG_SCHEDULED_PROC_STEP_START_DATETIME));
 
@@ -83,6 +91,7 @@ function workitemToStudyRow(workitem): Record<string, unknown> {
     date,
     time,
     accession: getStr(workitem, TAG_ACCESSION_NUMBER),
+    priority: getStr(workitem, TAG_SCHEDULED_PROC_STEP_PRIORITY),
     mrn: getStr(workitem, TAG_PATIENT_ID),
     patientName: utils.formatPN(getName(workitem[TAG_PATIENT_NAME])) || '',
     patientBirthdate: getStr(workitem, TAG_PATIENT_BIRTHDATE),
@@ -94,11 +103,12 @@ function workitemToStudyRow(workitem): Record<string, unknown> {
     procedureStepState: getStr(workitem, TAG_PROCEDURE_STEP_STATE),
     institutionName: getStr(workitem, TAG_INSTITUTION_NAME),
     stationClass: getStationClass(workitem),
+    _rawDicom: workitem,
   };
 }
 
 function mapUpsQueryParams(
-  origParams,
+  origParams: Record<string, any>,
   options: { supportsFuzzyMatching?: boolean; supportsWildcard?: boolean } = {}
 ): Record<string, string> {
   const params: Record<string, string> = {};
@@ -112,8 +122,10 @@ function mapUpsQueryParams(
     endDate,
     studyDescription,
     accessionNumber,
+    priority,
     modalitiesInStudy: _modalitiesInStudy,
     studyInstanceUid,
+    procedureStepState,
   } = origParams;
 
   if (patientName) params['00100010'] = options.supportsWildcard ? `*${patientName}*` : patientName;
@@ -125,9 +137,18 @@ function mapUpsQueryParams(
   } else if (endDate) {
     params['00404005'] = `-${endDate}`;
   }
-  if (studyDescription) params['00741204'] = options.supportsWildcard ? `*${studyDescription}*` : studyDescription;
+  if (studyDescription)
+    params['00741204'] = options.supportsWildcard ? `*${studyDescription}*` : studyDescription;
   if (accessionNumber) params['00080050'] = accessionNumber;
+  if (priority) {
+    const p = Array.isArray(priority) ? priority[0] : priority;
+    if (p) params['00741200'] = p;
+  }
   if (studyInstanceUid) params['0020000D'] = studyInstanceUid;
+  if (procedureStepState) {
+    const state = Array.isArray(procedureStepState) ? procedureStepState[0] : procedureStepState;
+    if (state) params['00741000'] = state;
+  }
 
   params['includefield'] = [
     '00100010',
@@ -141,13 +162,14 @@ function mapUpsQueryParams(
     '00404026',
     '0020000D',
     '00741000',
+    '00741200',
     '00080018',
   ].join(',');
 
   return params;
 }
 
-function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
+function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager: any) {
   const dicomWebImpl = createDicomWebApi(upsConfig, servicesManager);
 
   const { userAuthenticationService } = servicesManager.services;
@@ -173,6 +195,28 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
     return response.json();
   };
 
+  const upsRequest = async (
+    method: string,
+    path: string,
+    opts: { body?: unknown; queryParams?: Record<string, string>; contentType?: string } = {}
+  ): Promise<Response> => {
+    const url = new URL(`${upsConfig.upsRoot}${path}`, window.location.origin);
+    if (opts.queryParams) {
+      Object.entries(opts.queryParams).forEach(([k, v]) => url.searchParams.set(k, v));
+    }
+    const headers: Record<string, string> = { ...getAuthorizationHeader() };
+    if (opts.contentType) headers['Content-Type'] = opts.contentType;
+    const response = await fetch(url.toString(), {
+      method,
+      headers,
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    });
+    if (!response.ok && response.status !== 202) {
+      throw new Error(`UPS-RS ${method} [${response.status}]: ${url}`);
+    }
+    return response;
+  };
+
   const upsQueryOptions = {
     supportsFuzzyMatching: upsConfig.supportsFuzzyMatching,
     supportsWildcard: upsConfig.supportsWildcard,
@@ -181,7 +225,13 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
   const implementation = {
     ...dicomWebImpl,
 
-    initialize: ({ params, query }) => {
+    initialize: ({
+      params,
+      query,
+    }: {
+      params: Record<string, any>;
+      query: Record<string, any>;
+    }) => {
       if (upsConfig.onConfiguration && typeof upsConfig.onConfiguration === 'function') {
         Object.assign(upsConfig, upsConfig.onConfiguration(upsConfig, { params, query }));
       }
@@ -193,62 +243,112 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager) {
     query: {
       studies: dicomWebImpl.query.studies,
       workitems: {
-        mapParams: (origParams) => mapUpsQueryParams(origParams, upsQueryOptions),
-        search: async (origParams) => {
+        mapParams: (origParams: Record<string, any>) =>
+          mapUpsQueryParams(origParams, upsQueryOptions),
+        search: async (origParams: Record<string, any>) => {
           const mappedParams = mapUpsQueryParams(origParams, upsQueryOptions);
           const workitems = await upsGet('/workitems', mappedParams);
           return (workitems || []).map(workitemToStudyRow);
         },
-        processResults: (workitems) => (workitems || []).map(workitemToStudyRow),
+        processResults: (workitems: Record<string, any>[]) =>
+          (workitems || []).map(workitemToStudyRow),
       },
       series: dicomWebImpl.query.series,
       instances: dicomWebImpl.query.instances,
     },
 
-    getConfig: () => ({
-      ...dicomWebImpl.getConfig(),
-      defaultListType: 'workitems',
-    }),
+    getConfig: () => dicomWebImpl.getConfig(),
+
+    retrieve: {
+      ...dicomWebImpl.retrieve,
+      workitem: async (uid: string): Promise<Record<string, unknown>> => {
+        const results = await upsGet(`/workitems/${uid}`);
+        return (results as Record<string, unknown>[])[0];
+      },
+      subscriptionChannel: async (aeTitle: string): Promise<Response> => {
+        const url = new URL(`${upsConfig.upsRoot}/subscribers/${aeTitle}`, window.location.origin);
+        const response = await fetch(url.toString(), { headers: getAuthorizationHeader() });
+        if (!response.ok) throw new Error(`UPS-RS GET [${response.status}]: ${url}`);
+        return response;
+      },
+    },
 
     store: {
       ...dicomWebImpl.store,
-      workitem: async (dataset, workitemUID?: string) => {
-        const path = workitemUID ? `/workitems/${workitemUID}` : '/workitems';
-        const url = new URL(`${upsConfig.upsRoot}${path}`, window.location.origin);
+      workitem: async (dataset: unknown, workitemUID?: string): Promise<Response> => {
+        const url = new URL(`${upsConfig.upsRoot}/workitems`, window.location.origin);
+        if (workitemUID) url.searchParams.set('AffectedSOPInstanceUID', workitemUID);
         const response = await fetch(url.toString(), {
           method: 'POST',
           headers: { ...getAuthorizationHeader(), 'Content-Type': 'application/dicom+json' },
           body: JSON.stringify(dataset),
         });
-        if (!response.ok) throw new Error(`UPS-RS workitem POST [${response.status}]: ${url}`);
+        if (!response.ok) throw new Error(`UPS-RS POST [${response.status}]: ${url}`);
         return response;
       },
-      changeState: async (workitemUID: string, state: string, transactionUID?: string) => {
-        const url = new URL(
-          `${upsConfig.upsRoot}/workitems/${workitemUID}/state`,
-          window.location.origin
-        );
-        const body: Record<string, unknown> = { '00741000': { vr: 'CS', Value: [state] } };
+      updateWorkitem: async (
+        uid: string,
+        dataset: unknown,
+        transactionUID?: string
+      ): Promise<Response> => {
+        // PS3.18 §11.7 allows the Transaction UID in the query string, but
+        // dcm4chee-arc requires it in the request body as tag 00081195.
+        const body = transactionUID
+          ? {
+              ...(dataset as Record<string, unknown>),
+              '00081195': { vr: 'UI', Value: [transactionUID] },
+            }
+          : dataset;
+        return upsRequest('POST', `/workitems/${uid}`, {
+          body,
+          contentType: 'application/dicom+json',
+        });
+      },
+      changeState: async (
+        workitemUID: string,
+        state: string,
+        transactionUID?: string,
+        extraAttributes?: Record<string, unknown>
+      ): Promise<Response> => {
+        // dcm4chee-arc (and some other SCP implementations) require the calling
+        // AE title appended to the URL: PUT /workitems/{uid}/state/{aet}
+        // Falls back to the standard PS3.18 URL when performerAeTitle is absent.
+        const statePath = upsConfig.performerAeTitle
+          ? `${upsConfig.upsRoot}/workitems/${workitemUID}/state/${upsConfig.performerAeTitle}`
+          : `${upsConfig.upsRoot}/workitems/${workitemUID}/state`;
+        const url = new URL(statePath, window.location.origin);
+        const body: Record<string, unknown> = {
+          '00741000': { vr: 'CS', Value: [state] },
+          ...extraAttributes,
+        };
         if (transactionUID) body['00081195'] = { vr: 'UI', Value: [transactionUID] };
         const response = await fetch(url.toString(), {
           method: 'PUT',
           headers: { ...getAuthorizationHeader(), 'Content-Type': 'application/dicom+json' },
           body: JSON.stringify(body),
         });
-        if (!response.ok) throw new Error(`UPS-RS changeState PUT [${response.status}]: ${url}`);
+        if (!response.ok) throw new Error(`UPS-RS PUT [${response.status}]: ${url}`);
         return response;
       },
-      subscribe: async (workitemUID: string, aetitle: string) => {
-        const url = new URL(
-          `${upsConfig.upsRoot}/workitems/${workitemUID}/subscribers/${aetitle}`,
-          window.location.origin
-        );
-        const response = await fetch(url.toString(), {
-          method: 'POST',
-          headers: getAuthorizationHeader(),
+      cancelWorkitem: async (uid: string): Promise<Response> => {
+        return upsRequest('POST', `/workitems/${uid}/cancelrequest`, {
+          contentType: 'application/dicom+json',
         });
-        if (!response.ok) throw new Error(`UPS-RS subscribe POST [${response.status}]: ${url}`);
-        return response;
+      },
+      subscribe: async (
+        workitemUID: string,
+        aeTitle: string,
+        deletionLock?: boolean
+      ): Promise<Response> => {
+        return upsRequest('POST', `/workitems/${workitemUID}/subscribers/${aeTitle}`, {
+          queryParams: deletionLock ? { deletionlock: '1' } : {},
+        });
+      },
+      suspendSubscription: async (aeTitle: string): Promise<Response> => {
+        return upsRequest('POST', `/workitems/1.2.840.10008.5.1.4.34.5/subscribers/${aeTitle}`);
+      },
+      deleteSubscription: async (uid: string, aeTitle: string): Promise<Response> => {
+        return upsRequest('DELETE', `/workitems/${uid}/subscribers/${aeTitle}`);
       },
     },
   };
