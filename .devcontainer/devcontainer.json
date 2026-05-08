@@ -13,7 +13,7 @@
       "label": "Orthanc"
     }
   },
-  "postCreateCommand": "yarn install --frozen-lockfile",
+  "postCreateCommand": "yarn install --frozen-lockfile --ignore-engines",
   "remoteUser": "node",
   "mounts": [
     "source=ohif-viewers-node-modules,target=/workspaces/Viewers/node_modules,type=volume"

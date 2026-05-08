@@ -13,6 +13,14 @@ interface UseWorkitemActionsOptions {
   dataSource: any;
   onRefresh: () => void;
   uiNotificationService: { show: (opts: NotificationOptions) => void };
+  /** AE title of this performer station. Used for COMPLETED DICOM code sequences (FR-004). */
+  performerAeTitle?: string;
+  /**
+   * Called after a successful claim with the workitem UID.
+   * Use this to trigger viewer navigation from the component.
+   * Optional — omitting it preserves existing behaviour.
+   */
+  onClaimSuccess?: (uid: string) => void;
 }
 
 interface UseWorkitemActionsReturn {
@@ -23,31 +31,54 @@ interface UseWorkitemActionsReturn {
   getActionState: (uid: string) => WorkitemActionState;
 }
 
+/** Format a Date as a DICOM DT string (YYYYMMDDHHmmss). */
+function formatDicomDT(date: Date): string {
+  const pad = (n: number, len = 2) => String(n).padStart(len, '0');
+  return (
+    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
+    `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+  );
+}
+
 /**
- * Convert a RFC 4122 UUID to a valid DICOM UID using the 2.25 OID arc.
- * DICOM UID (VR: UI) may only contain digits 0-9 and dots.
- * Standard: 2.25.<decimal representation of the 128-bit UUID integer>
+ * Generates a deterministic DICOM UID from a workitem SOP Instance UID and
+ * a station name, following the approach in specs/docs/dicomUid.ts.
+ *
+ * Uses SHA-256 via WebCrypto (browser-native). The first 16 bytes of the
+ * digest are interpreted as an unsigned 128-bit integer and encoded using
+ * the DICOM 2.25 OID arc: 2.25.<decimal>.
+ *
+ * Producing the same UID for the same (instanceUID, stationName) pair is
+ * intentional — the Transaction UID is derived on demand for claim, complete,
+ * cancel, and updateWorkitem without requiring any persistent storage.
  */
-function uuidToDicomUID(uuid: string): string {
-  const hex = uuid.replace(/-/g, '');
-  const decimal = BigInt('0x' + hex).toString(10);
-  return '2.25.' + decimal;
+async function generateDicomUidFromInstanceAndStation(
+  instanceUID: string,
+  stationName: string
+): Promise<string> {
+  const input = `${instanceUID}|${stationName.trim()}`;
+  const encoded = new TextEncoder().encode(input);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', encoded);
+  // First 16 bytes → 128-bit unsigned integer → 2.25 arc (≤ 64 chars)
+  const bytes = new Uint8Array(hashBuffer).slice(0, 16);
+  let n = 0n;
+  for (const b of bytes) n = (n << 8n) + BigInt(b);
+  return `2.25.${n.toString(10)}`;
 }
 
 export function useWorkitemActions({
   dataSource,
   onRefresh,
   uiNotificationService,
+  performerAeTitle,
+  onClaimSuccess,
 }: UseWorkitemActionsOptions): UseWorkitemActionsReturn {
-  // Maps workitem UID → Transaction UID for workitems claimed in this session.
-  // Kept as a ref so async callbacks always read the latest value.
-  // Also written to sessionStorage so the mapping survives a page refresh
-  // within the same browser tab.  The SCU is the authoritative source of the
-  // Transaction UID — the SCP does not reliably echo it back via GET.
-  const claimedWorkitemsRef = useRef<Map<string, string>>(new Map());
+  // Maps workitem UID → DICOM DT string recorded at claim time (00404050)
+  const claimStartDTsRef = useRef<Map<string, string>>(new Map());
 
-  /** sessionStorage key for a given workitem UID. */
-  const sessionKey = (uid: string) => `ups_txuid_${uid}`;
+  /** localStorage key for the claim start datetime of a given workitem. */
+  const startDtKey = (uid: string) => `ups_startdt_${uid}`;
+
   const [actionStates, setActionStates] = useState<Map<string, WorkitemActionState>>(new Map());
 
   const setActionState = useCallback((uid: string, state: WorkitemActionState) => {
@@ -68,51 +99,70 @@ export function useWorkitemActions({
   );
 
   /**
-   * Resolve the Transaction UID for a workitem.
+   * Resolve the Performed Procedure Step Start DateTime recorded at claim time
+   * (FR-002 / DICOM PS3.3 C.30.3, tag 00404050).
    *
-   * The SCU is the authoritative source of the Transaction UID — the SCP
-   * (e.g. dcm4chee-arc) treats it as an opaque lock token and does not
-   * reliably return it in GET responses.  Resolution order:
-   *   1. In-memory ref (hot path, same render cycle as claim)
-   *   2. sessionStorage (survives page refresh within the same tab)
-   *   3. Throw — the UID cannot be recovered; surface the error to the user.
+   * DICOM PS3.18 §11.10.3: SQ attributes replace the entire sequence on each
+   * updateWorkitem call.  Therefore complete() MUST re-send 00404050 alongside
+   * 00404051 to avoid overwriting the start DT with an empty value.
    *
-   * Throws if the UID cannot be determined so callers never proceed silently.
+   * Falls back to completionDT if the stored value cannot be recovered
+   * (storage cleared / different browser) — not ideal but still DICOM-conformant.
    */
-  const resolveTxUID = useCallback(
-    (uid: string): string => {
-      const cached = claimedWorkitemsRef.current.get(uid);
-      if (cached) return cached;
-
-      // Try sessionStorage (cross-refresh within the same tab)
-      try {
-        const stored = sessionStorage.getItem(sessionKey(uid));
-        if (stored) {
-          // Re-hydrate the in-memory cache for subsequent calls
-          claimedWorkitemsRef.current.set(uid, stored);
-          return stored;
-        }
-      } catch {
-        // sessionStorage may be unavailable (private browsing, storage quota)
+  const resolveStartDT = useCallback((uid: string, fallback: string): string => {
+    const cached = claimStartDTsRef.current.get(uid);
+    if (cached) return cached;
+    try {
+      const stored = localStorage.getItem(startDtKey(uid));
+      if (stored) {
+        claimStartDTsRef.current.set(uid, stored);
+        return stored;
       }
-
-      throw new Error(
-        `Transaction UID for workitem ${uid} is not available in this session. ` +
-          'The workitem may have been claimed in a different browser tab or session.'
-      );
-    },
-    []
-  );
+    } catch {
+      /* localStorage may be unavailable (private browsing, storage quota) */
+    }
+    return fallback;
+  }, []);
 
   const claim = useCallback(
     async (uid: string): Promise<void> => {
-      const txUID = uuidToDicomUID(crypto.randomUUID());
+      if (!performerAeTitle) {
+        uiNotificationService.show({
+          title: 'Claim Failed',
+          message: 'Station name not configured — cannot claim workitem.',
+          type: 'error',
+          duration: 6000,
+        });
+        return;
+      }
+      const txUID = await generateDicomUidFromInstanceAndStation(uid, performerAeTitle);
       setActionState(uid, 'claiming');
       try {
         await dataSource.store.changeState(uid, 'IN PROGRESS', txUID);
-        claimedWorkitemsRef.current.set(uid, txUID);
-        // Persist so the mapping survives a page refresh in this tab
-        try { sessionStorage.setItem(sessionKey(uid), txUID); } catch { /* quota/private */ }
+        // Record and persist the start datetime (DICOM PS3.3 C.30.3 — 00404050, FR-002)
+        const claimDT = formatDicomDT(new Date());
+        claimStartDTsRef.current.set(uid, claimDT);
+        try {
+          localStorage.setItem(startDtKey(uid), claimDT);
+        } catch {
+          /* quota/private */
+        }
+        // Set PerformedProcedureStepStartDateTime on the workitem (best-effort;
+        // claim has already succeeded so a failure here is non-fatal)
+        try {
+          await dataSource.store.updateWorkitem(
+            uid,
+            {
+              '00741216': {
+                vr: 'SQ',
+                Value: [{ '00404050': { vr: 'DT', Value: [claimDT] } }],
+              },
+            },
+            txUID
+          );
+        } catch (updateErr) {
+          console.warn('[useWorkitemActions] claim: failed to set start datetime:', updateErr);
+        }
         uiNotificationService.show({
           title: 'Workitem Claimed',
           message: 'The workitem is now IN PROGRESS.',
@@ -120,6 +170,7 @@ export function useWorkitemActions({
           duration: 4000,
         });
         onRefresh();
+        onClaimSuccess?.(uid);
       } catch (err) {
         console.error('[useWorkitemActions] claim failed:', err);
         uiNotificationService.show({
@@ -133,36 +184,65 @@ export function useWorkitemActions({
         setActionState(uid, 'idle');
       }
     },
-    [dataSource, onRefresh, uiNotificationService, setActionState]
+    [dataSource, onRefresh, uiNotificationService, setActionState, onClaimSuccess]
   );
 
   const complete = useCallback(
     async (uid: string): Promise<void> => {
+      if (!performerAeTitle) {
+        uiNotificationService.show({
+          title: 'Complete Failed',
+          message: 'Station name not configured — cannot complete workitem.',
+          type: 'error',
+          duration: 6000,
+        });
+        setActionState(uid, 'idle');
+        return;
+      }
       setActionState(uid, 'completing');
       try {
-        const txUID = resolveTxUID(uid);
-        // DICOM PS3.3 C.30.3 — Procedure Step End DateTime (0040,4051) is a
-        // nested attribute inside Unified Procedure Step Performed Procedure
-        // Sequence (0074,1216). Must be set before the SCP will accept a
-        // COMPLETED state transition (PS3.4 CC.2.5).
-        const now = new Date();
-        const pad = (n: number, len = 2) => String(n).padStart(len, '0');
-        const completionDT =
-          `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
-          `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+        const txUID = await generateDicomUidFromInstanceAndStation(uid, performerAeTitle);
+        // dcm4chee-arc meetFinalStateRequirementsOfCompleted checks the following
+        // inside 00741216 (UPS Performed Procedure Sequence):
+        //   00404050 PerformedProcedureStepStartDateTime — from claim time (FR-002)
+        //   00404051 PerformedProcedureStepEndDateTime   — type 1 (set now)
+        //   00404028 PerformedStationNameCodeSequence    — valid Code (FR-004)
+        //   00404019 PerformedWorkitemCodeSequence       — valid Code (FR-004)
+        const completionDT = formatDicomDT(new Date());
+        // DICOM PS3.18 §11.10.3: SQ attributes REPLACE the entire sequence on each
+        // updateWorkitem POST — a partial SQ would overwrite 00404050 with nothing.
+        // Therefore all four required attributes must be included in this single call.
+        const startDT = resolveStartDT(uid, completionDT);
+        const stationCode = performerAeTitle;
+        const performedCode = {
+          '00080100': { vr: 'SH', Value: [stationCode] },
+          '00080102': { vr: 'SH', Value: ['99OHIF'] },
+          '00080104': { vr: 'LO', Value: ['Completed Workitem'] },
+        };
         await dataSource.store.updateWorkitem(
           uid,
           {
             '00741216': {
               vr: 'SQ',
-              Value: [{ '00404051': { vr: 'DT', Value: [completionDT] } }],
+              Value: [
+                {
+                  '00404050': { vr: 'DT', Value: [startDT] },
+                  '00404051': { vr: 'DT', Value: [completionDT] },
+                  '00404028': { vr: 'SQ', Value: [performedCode] },
+                  '00404019': { vr: 'SQ', Value: [performedCode] },
+                },
+              ],
             },
           },
           txUID
         );
         await dataSource.store.changeState(uid, 'COMPLETED', txUID);
-        claimedWorkitemsRef.current.delete(uid);
-        try { sessionStorage.removeItem(sessionKey(uid)); } catch { /* quota/private */ }
+        claimStartDTsRef.current.delete(uid);
+        try {
+          localStorage.removeItem(startDtKey(uid));
+        } catch {
+          /* quota/private */
+        }
         uiNotificationService.show({
           title: 'Workitem Completed',
           message: 'The workitem has been marked COMPLETED.',
@@ -182,20 +262,34 @@ export function useWorkitemActions({
         setActionState(uid, 'idle');
       }
     },
-    [dataSource, onRefresh, uiNotificationService, setActionState, resolveTxUID]
+    [dataSource, onRefresh, uiNotificationService, setActionState, resolveStartDT, performerAeTitle]
   );
 
   const cancel = useCallback(
     async (uid: string, reason?: string): Promise<void> => {
+      if (!performerAeTitle) {
+        uiNotificationService.show({
+          title: 'Cancel Failed',
+          message: 'Station name not configured — cannot cancel workitem.',
+          type: 'error',
+          duration: 6000,
+        });
+        setActionState(uid, 'idle');
+        return;
+      }
       setActionState(uid, 'canceling');
       try {
-        const txUID = resolveTxUID(uid);
+        const txUID = await generateDicomUidFromInstanceAndStation(uid, performerAeTitle);
         const extraAttributes = reason
           ? { '00741238': { vr: 'LO', Value: [reason.substring(0, 256)] } }
           : undefined;
         await dataSource.store.changeState(uid, 'CANCELED', txUID, extraAttributes);
-        claimedWorkitemsRef.current.delete(uid);
-        try { sessionStorage.removeItem(sessionKey(uid)); } catch { /* quota/private */ }
+        claimStartDTsRef.current.delete(uid);
+        try {
+          localStorage.removeItem(startDtKey(uid));
+        } catch {
+          /* quota/private */
+        }
         uiNotificationService.show({
           title: 'Workitem Canceled',
           message: 'The workitem has been marked CANCELED.',
@@ -215,7 +309,7 @@ export function useWorkitemActions({
         setActionState(uid, 'idle');
       }
     },
-    [dataSource, onRefresh, uiNotificationService, setActionState, resolveTxUID]
+    [dataSource, onRefresh, uiNotificationService, setActionState, performerAeTitle]
   );
 
   const reject = useCallback(
@@ -246,4 +340,3 @@ export function useWorkitemActions({
 
   return { claim, complete, cancel, reject, getActionState };
 }
-

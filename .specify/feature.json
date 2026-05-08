@@ -1,1 +1,3 @@
-{ "feature_directory": "specs/002-workitems-task-performer" }
+{
+  "feature_directory": "specs/004-claim-launch-basic-viewer"
+}

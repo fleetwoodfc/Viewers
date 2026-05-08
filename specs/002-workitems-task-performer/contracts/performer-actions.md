@@ -14,12 +14,18 @@
 import type { DicomWebUpsDataSource } from '../../../types'; // or inferred from servicesManager
 
 interface UseWorkitemActionsOptions {
-  /** The UPS datasource (provides store.changeState, store.cancelWorkitem). */
+  /** The UPS datasource (provides store.changeState, store.cancelWorkitem, store.updateWorkitem). */
   dataSource: ReturnType<typeof createDicomWebUpsApi>;
   /** Called after any successful state-changing action to reload the list. */
   onRefresh: () => void;
   /** OHIF notification service for user feedback. */
   uiNotificationService: { show: (opts: NotificationOptions) => void };
+  /**
+   * AE title of this performer station (FR-004).
+   * Used as the code value for `00404028` / `00404019` in the COMPLETED payload.
+   * Falls back to `'UNKNOWN'` when absent.
+   */
+  performerAeTitle?: string;
 }
 
 interface NotificationOptions {
@@ -31,15 +37,26 @@ interface NotificationOptions {
 
 interface UseWorkitemActionsReturn {
   /**
-   * Claim a SCHEDULED workitem → IN PROGRESS.
-   * Generates a Transaction UID via crypto.randomUUID() and stores it.
+   * Claim a SCHEDULED workitem → IN PROGRESS (FR-001/FR-002).
+   * 1. Generates a Transaction UID via `uuidToDicomUID(crypto.randomUUID())`.
+   * 2. Calls `store.changeState(uid, 'IN PROGRESS', txUID)`.
+   * 3. Persists txUID to `localStorage` key `ups_txuid_{uid}`.
+   * 4. Calls `store.updateWorkitem` to record `00404050` (PerformedProcedureStepStartDateTime)
+   *    inside `00741216`; this call is best-effort (claim already succeeded).
+   * 5. Persists the start DT string to `localStorage` key `ups_startdt_{uid}`.
    * @param uid  Workitem SOP Instance UID
    */
   claim: (uid: string) => Promise<void>;
 
   /**
-   * Complete a claimed IN PROGRESS workitem → COMPLETED.
-   * Requires the workitem to have been claimed in this session.
+   * Complete a claimed IN PROGRESS workitem → COMPLETED (FR-004).
+   * 1. Resolves txUID from in-memory ref → `localStorage` `ups_txuid_{uid}` → throws.
+   * 2. Calls `store.updateWorkitem` with `00741216` SQ containing all four required attrs:
+   *    - `00404050`: start DT recovered from `localStorage` `ups_startdt_{uid}` (fallback: now)
+   *    - `00404051`: current wall-clock time
+   *    - `00404028`/`00404019`: `performerAeTitle ?? 'UNKNOWN'` as code value (scheme `99OHIF`)
+   * 3. Calls `store.changeState(uid, 'COMPLETED', txUID)`.
+   * 4. Removes `ups_txuid_{uid}` and `ups_startdt_{uid}` from `localStorage`.
    * @param uid  Workitem SOP Instance UID
    */
   complete: (uid: string) => Promise<void>;
@@ -73,6 +90,18 @@ interface UseWorkitemActionsReturn {
 }
 
 type WorkitemActionState = 'idle' | 'claiming' | 'completing' | 'canceling' | 'rejecting';
+
+/**
+ * Internal storage layout (SCU-authoritative; SCP does not echo these values).
+ *
+ * In-memory refs (inside hook, reset on page reload — recovered from localStorage):
+ *   claimedWorkitemsRef : Map<uid, txUID>   — mirrors ups_txuid_{uid}
+ *   claimStartDTsRef    : Map<uid, dicomDT> — mirrors ups_startdt_{uid}
+ *
+ * localStorage keys:
+ *   ups_txuid_{uid}   — Transaction UID (2.25.{decimal}); removed on complete/cancel
+ *   ups_startdt_{uid} — DICOM DT string YYYYMMDDHHmmss; removed on complete/cancel
+ */
 
 declare function useWorkitemActions(opts: UseWorkitemActionsOptions): UseWorkitemActionsReturn;
 ```

@@ -107,14 +107,41 @@ function WorkItemsList({
     shouldUseDefaultSort && canSort ? { sortBy: 'date', sortDirection: 'ascending' } : {};
   const { customizationService, uiNotificationService } = servicesManager.services;
 
+  // Use performer station AE title configured on the active UPS datasource.
+  const performerAeTitle: string | undefined = (dataSource as any).getConfig?.()?.performerAeTitle;
+
   const { claim, complete, cancel, reject, getActionState } = useWorkitemActions({
     dataSource,
     onRefresh,
     uiNotificationService,
-  });
+    performerAeTitle,
+    onClaimSuccess: (uid: string) => {
+      // Find the workitem row by its SOP Instance UID (tag 00080018).
+      const workitem = (workitems as any[]).find(
+        w => (w._rawDicom?.['00080018']?.Value?.[0] ?? w.studyInstanceUid) === uid
+      );
+      const studyInstanceUid: string | undefined = workitem?.studyInstanceUid;
+      if (!studyInstanceUid) return;
 
-  // P3: real-time assignment notifications via UPS-RS WebSocket channel
-  const performerAeTitle: string | undefined = (dataSource as any).getConfig?.()?.performerAeTitle;
+      const viewerMode = appConfig.loadedModes?.find((m: any) => m.routeName === 'viewer');
+      if (!viewerMode) {
+        uiNotificationService.show({
+          title: 'Viewer Not Available',
+          message: 'The Basic Viewer mode is not loaded in this configuration.',
+          type: 'info',
+          duration: 5000,
+        });
+        return;
+      }
+
+      const query = new URLSearchParams();
+      if (filterValues.configUrl) query.append('configUrl', filterValues.configUrl);
+      query.append('StudyInstanceUIDs', studyInstanceUid);
+      query.append('returnTo', '/workitems');
+      preserveQueryParameters(query);
+      navigate(`/${viewerMode.routeName}${dataPath || ''}?${query.toString()}`);
+    },
+  });
 
   useUpsNotifications({
     dataSource,
@@ -422,7 +449,7 @@ function WorkItemsList({
         },
         {
           key: 'details',
-          content: _rawDicom ? (
+          content: workitemUid ? (
             <button
               className="text-primary-active hover:text-white"
               title="View DICOM attributes"
@@ -430,7 +457,7 @@ function WorkItemsList({
                 event.stopPropagation();
                 show({
                   content: WorkItemDetailsModal,
-                  contentProps: { rawDicom: _rawDicom },
+                  contentProps: { workitemUID: workitemUid, dataSource, uiNotificationService },
                   title: `Work Item Attributes${patientName ? ' — ' + patientName : ''}`,
                   containerClassName: 'max-w-3xl',
                 });

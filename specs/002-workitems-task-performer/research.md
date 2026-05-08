@@ -51,8 +51,12 @@ All required UPS-RS operations are already implemented:
 
 **Decision**:
 - Use `crypto.randomUUID()` to generate the Transaction UID at claim time.
-- Store it in a `Map<uid, txUID>` held in a `useRef` inside the `useWorkitemActions` hook.
-- **Do not** persist across page reloads — session-scoped only (matches assumption in spec).
+- Convert to a valid DICOM UID using the `2.25.{decimal}` OID arc (`uuidToDicomUID`).
+- Store the Transaction UID in `claimedWorkitemsRef` (in-memory) AND `localStorage` key `ups_txuid_{uid}` so it survives page refreshes, new tabs, and new browser windows on the same origin.
+- Also record `PerformedProcedureStepStartDateTime` (`00404050`) at claim time via a best-effort `updateWorkitem` call, and persist it to `localStorage` key `ups_startdt_{uid}` for recovery at completion time.
+- At `complete()`: read the stored start DT (falls back to completion time if lost); set `00404051` to the current time.
+- At `complete()` / `cancel()`: remove both localStorage entries.
+- The SCU is the authoritative source of both the Transaction UID and the start DT.
 
 ---
 
@@ -156,4 +160,5 @@ platform/app/src/routes/WorkItemsList/
 | Redux/Zustand for claimed workitems map | Overkill for session-scoped, single-component state |
 | Polling via `setInterval` for P3 | WebSocket already available via feature 001; polling is less timely |
 | Custom `useModal` re-implementation for cancel dialog | `useModal` from `@ohif/ui-next` already in scope and tested |
-| Storing Transaction UID in localStorage | Session scope is sufficient; localStorage survives reloads unnecessarily |
+| `sessionStorage` for Transaction UID | Cross-window scenario fails; `localStorage` (origin-scoped) is required |
+| Placeholder `NO_OP` codes in COMPLETED payload | Not clinically identifiable; `performerAeTitle` is available and more meaningful |

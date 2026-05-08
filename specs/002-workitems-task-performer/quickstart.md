@@ -47,6 +47,11 @@ In your `app-config.js` (or the config JSON used for your deployment), add `perf
 5. A success toast appears: *"Workitem Claimed — The workitem is now IN PROGRESS."*
 6. The "Claim" button is replaced by **Complete** and **Cancel** buttons on the now IN PROGRESS row (since the session holds the Transaction UID).
 
+> **Start DateTime (FR-002)**: Immediately after the state transition, the hook calls `updateWorkitem` to set
+> `00404050` (PerformedProcedureStepStartDateTime) inside `00741216` using the wall-clock time of the claim.
+> The timestamp is also persisted to `localStorage` key `ups_startdt_{uid}` so it can be recovered at completion
+> time even after a page refresh.
+
 ---
 
 ## 3. Complete a Claimed Workitem
@@ -55,6 +60,13 @@ In your `app-config.js` (or the config JSON used for your deployment), add `perf
 2. Click **Complete**.
 3. The row transitions to **COMPLETED**.
 4. A success toast appears: *"Workitem Completed."*
+
+> **DICOM payload (FR-004)**: The `updateWorkitem` call sets `00741216` with all four required attributes:
+> - `00404050` — start DT recovered from `localStorage` `ups_startdt_{uid}` (recorded at claim time)
+> - `00404051` — current wall-clock time
+> - `00404028`/`00404019` — code value is `performerAeTitle` configured in the datasource (falls back to `UNKNOWN`).
+>
+> Both `ups_txuid_{uid}` and `ups_startdt_{uid}` are removed from `localStorage` after a successful complete.
 
 ---
 

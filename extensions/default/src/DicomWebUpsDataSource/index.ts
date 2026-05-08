@@ -257,7 +257,7 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager: any) {
       instances: dicomWebImpl.query.instances,
     },
 
-    getConfig: () => dicomWebImpl.getConfig(),
+    getConfig: () => ({ ...dicomWebImpl.getConfig(), ...upsConfig }),
 
     retrieve: {
       ...dicomWebImpl.retrieve,
@@ -291,8 +291,8 @@ function createDicomWebUpsApi(upsConfig: UpsConfig, servicesManager: any) {
         dataset: unknown,
         transactionUID?: string
       ): Promise<Response> => {
-        // PS3.18 §11.7 allows the Transaction UID in the query string, but
-        // dcm4chee-arc requires it in the request body as tag 00081195.
+        // dcm4chee-arc requires the Transaction UID in the request body as
+        // tag 00081195 for Update UPS (POST /workitems/{uid}).
         const body = transactionUID
           ? {
               ...(dataset as Record<string, unknown>),

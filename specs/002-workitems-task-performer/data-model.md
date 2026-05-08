@@ -37,27 +37,34 @@ Path: `workitem['00404025']?.Value?.[0]?.['00080100']?.Value?.[0]` (Code Value s
 
 ---
 
-## 2. Session-Scoped Claimed Workitems Map
+## 2. SCU-Owned Claim Data (localStorage + in-memory)
 
-Held inside the `useWorkitemActions` hook via `useRef` — not persisted to storage.
+Two refs held inside `useWorkitemActions`, each mirrored to `localStorage`.
 
 ```typescript
 /**
  * Maps workitem SOP Instance UID → Transaction UID.
  * Populated on successful Claim; cleared on Complete/Cancel.
- * Session-scoped: lost on page reload.
+ * localStorage key: ups_txuid_{uid}
  */
 type ClaimedWorkitemsMap = Map<string, string>;
 
 /**
- * One entry in the claimed workitems map.
+ * Maps workitem SOP Instance UID → DICOM DT string (YYYYMMDDHHmmss)
+ * recorded at the moment of claiming (used as 00404050 at completion time).
+ * localStorage key: ups_startdt_{uid}
  */
+type ClaimStartDTsMap = Map<string, string>;
+
 interface ClaimedWorkitem {
-  uid: string;           // workitem SOP Instance UID
-  transactionUID: string; // RFC-4122 v4 UUID generated via crypto.randomUUID()
-  claimedAt: number;     // Date.now() — for future timeout/retry logic
+  uid: string;            // workitem SOP Instance UID
+  transactionUID: string; // 2.25.{decimal} generated via crypto.randomUUID()
+  startDT: string;        // DICOM DT recorded when claim succeeded
 }
 ```
+
+Both entries are removed from the in-memory refs and `localStorage` on
+successful Complete or Cancel.
 
 ---
 
@@ -124,12 +131,13 @@ interface UpsEventNotification {
 WorkItemsList (component)
   │
   ├── uses → useWorkitemActions (hook)
-  │             ├── claimedWorkitemsRef: ClaimedWorkitemsMap
-  │             ├── actionStates: ActionStateMap (useState)
-  │             ├── claim(uid)         → store.changeState(uid, 'IN PROGRESS', txUID)
-  │             ├── complete(uid)      → store.changeState(uid, 'COMPLETED', txUID)
-  │             ├── cancel(uid, reason)→ store.changeState(uid, 'CANCELED', txUID) + reason
-  │             └── reject(uid)        → store.cancelWorkitem(uid)
+                ├── claimedWorkitemsRef: ClaimedWorkitemsMap (+ localStorage ups_txuid_{uid})
+                ├── claimStartDTsRef: ClaimStartDTsMap (+ localStorage ups_startdt_{uid})
+                ├── actionStates: ActionStateMap (useState)
+                ├── claim(uid)         → changeState(IN PROGRESS) + updateWorkitem(00404050) + persist both
+                ├── complete(uid)      → updateWorkitem(00741216 all 4) + changeState(COMPLETED) + cleanup
+                ├── cancel(uid, reason)→ changeState(CANCELED) + cleanup
+                └── reject(uid)        → cancelWorkitem(uid)
   │
   ├── uses → useUpsNotifications (hook, P3, optional)
   │             ├── store.subscribe(globalUID, aeTitle)

@@ -250,6 +250,7 @@ describe('store.updateWorkitem', () => {
     await ds.store.updateWorkitem(UID, delta, 'tx-001');
 
     const [url, init] = (global.fetch as jest.Mock).mock.calls[0];
+    // dcm4chee-arc requires txUID in the body, not as a query parameter
     expect(url).not.toContain('transaction');
     const body = JSON.parse(init.body);
     expect(body['00081195']).toEqual({ vr: 'UI', Value: ['tx-001'] });

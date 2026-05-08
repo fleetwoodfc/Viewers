@@ -123,7 +123,26 @@ description: "Task list for WorkItems List — Task Performer Actions"
 - [X] T025 [P] Add button loading/disabled visual styles in `WorkItemActionsPanel.tsx` using Tailwind classes consistent with existing OHIF button patterns (`@ohif/ui-next` Button component or equivalent `className` approach)
 - [X] T026 Verify existing WorkItemsList features are unaffected: manually test filter, sort, pagination, study launch buttons, and DICOM tag browser with the Actions column present (SC-006 regression guard)
 - [X] T027 [P] Update `WorkItemsList.tsx` grid column total to account for the new Actions column (adjust existing `gridCol` values if the total exceeds the layout container)
-- [X] T028 [P] Implement `resolveTxUID(uid)` in `useWorkitemActions.ts`: (1) check `claimedWorkitemsRef` first; (2) on miss, read `sessionStorage.getItem('ups_txuid_${uid}')` and re-hydrate the ref; (3) throw a descriptive error if neither resolves.  Also persist to `sessionStorage` on successful `claim` and remove on `complete`/`cancel`.  Add unit tests covering: (a) in-memory cache hit, (b) sessionStorage hit after simulated refresh, (b3/b4) cleanup on complete/cancel, (c) no UID → error notification without calling changeState.
+- [X] T028 [P] Implement `resolveTxUID(uid)` in `useWorkitemActions.ts`: (1) check `claimedWorkitemsRef` first; (2) on miss, read `localStorage.getItem('ups_txuid_${uid}')` and re-hydrate the ref; (3) throw a descriptive error if neither resolves.  Also persist to `localStorage` on successful `claim` and remove on `complete`/`cancel`.  Unit tests: (a) in-memory cache hit, (b) localStorage hit after simulated refresh, (b2) same via cancel, (b3/b4) cleanup on complete/cancel, (c/c2) no UID → error notification without calling changeState.
+
+---
+
+## Phase 9: Spec Clarification Amendments (FR-002 / FR-004)
+
+**Purpose**: Implement two spec clarifications agreed on 2026-05-05: (1) record `PerformedProcedureStepStartDateTime` at claim time; (2) use `performerAeTitle` as the station code value in COMPLETED payload instead of placeholder `NO_OP`.
+
+**Goal (FR-002)**: `claim()` calls `updateWorkitem` with `00404050` immediately after the state transition succeeds and persists the timestamp to `localStorage` key `ups_startdt_{uid}`.
+
+**Goal (FR-004)**: `complete()` reads start DT from `claimStartDTsRef`/`localStorage` for `00404050`; uses `performerAeTitle ?? 'UNKNOWN'` for `00404028`/`00404019` code value.
+
+- [X] T029 [P] Add `formatDicomDT(date: Date): string` helper, `claimStartDTsRef: useRef<Map<string,string>>`, `startDtKey(uid)`, and `resolveStartDT(uid, fallback)` in `platform/app/src/routes/WorkItemsList/useWorkitemActions.ts`
+- [X] T030 [US1] Update `claim()` in `useWorkitemActions.ts`: after `changeState` succeeds, call `dataSource.store.updateWorkitem(uid, { '00741216': { vr: 'SQ', Value: [{ '00404050': { vr: 'DT', Value: [claimDT] } }] } }, txUID)` (best-effort, non-fatal on failure) and persist `claimDT` to `localStorage` key `ups_startdt_{uid}` (FR-002)
+- [X] T031 [US2] Add `performerAeTitle?: string` to `UseWorkitemActionsOptions` in `useWorkitemActions.ts`; update `complete()` to use `resolveStartDT(uid, completionDT)` for `00404050` and `performerAeTitle ?? 'UNKNOWN'` as code value for `00404028`/`00404019`; update `complete()` and `cancel()` to also remove `ups_startdt_{uid}` from `localStorage` and `claimStartDTsRef` (FR-004)
+- [X] T032 [P] Update `contracts/performer-actions.md` §1 (`UseWorkitemActionsOptions`): add `performerAeTitle?: string` field with JSDoc; update §2 entity diagram to show `claimedStartDTsRef` and `startDtKey`
+- [X] T033 [P] Update `quickstart.md`: §2 (Claim) — add note that `updateWorkitem` records `00404050` start DT; §3 (Complete) — add note that station code value is `performerAeTitle` (or `UNKNOWN` if not configured)
+- [X] T034 Add unit tests in `useWorkitemActions.test.ts` for FR-002/FR-004 behaviour: (d) `claim()` calls `updateWorkitem` with `00404050` DT tag; (e) `claim()` persists `ups_startdt_{uid}` to localStorage; (f) `complete()` uses claim DT for `00404050` (not the completion timestamp); (g) `complete()` sets `performerAeTitle` as code value in `00404028`/`00404019`; (h) `complete()`/`cancel()` remove `ups_startdt_{uid}` from localStorage
+
+**Checkpoint**: FR-002 and FR-004 fully implemented, documented, and tested.
 
 ---
 
@@ -135,7 +154,9 @@ T001 (UpsConfig type) → T002–T007 (useWorkitemActions) → US1 (T008–T011)
                                                          → US3 (T014–T016) [after US2]
                                                          → US4 (T017–T018) [parallel with US3]
                                                          → US5 (T019–T023) [independent]
-T024–T027 (Polish) [after US1–US4 complete]
+T024–T028 (Polish) [after US1–US4 complete]
+T029–T031 [implemented; amend Phase 2/3/4 behaviours] → T032–T033 (docs) [parallel]
+                                                       → T034 (tests)
 ```
 
 **Parallel opportunities per story**:
@@ -144,6 +165,7 @@ T024–T027 (Polish) [after US1–US4 complete]
 - US4: T017 (button) can be built in parallel with T018 (wiring)
 - US5: T019 (hook scaffold) and T020 (mount) are sequential; T021–T022 can be parallel once T020 is done
 - Polish: T024, T025, T027 are all parallel
+- Phase 9: T032 and T033 are parallel; T034 is independent
 
 ---
 
@@ -178,7 +200,9 @@ T024–T027 (Polish) [after US1–US4 complete]
 | 6 — Reject | T017–T018 | US4 | P2 |
 | 7 — WebSocket | T019–T023 | US5 | P3 |
 | 8 — Polish | T024–T028 | — | — |
-| **Total** | **28 tasks** | 5 stories | — |
+| 9 — Amendments | T029–T034 | US1/US2 | P1 |
+| **Total** | **34 tasks** | 5 stories | — |
 
-**Parallel opportunities**: 12 tasks marked [P]
+**Parallel opportunities**: 14 tasks marked [P]
 **MVP scope**: T001–T013 (13 tasks) delivers US1 + US2 (claim + complete)
+**Completed**: T001–T034 (34 tasks done)

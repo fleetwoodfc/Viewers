@@ -26,8 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpangocairo-1.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Yarn 1.22.22 globally
-RUN npm install -g yarn@1.22.22
+# Install Yarn 1.22.22 globally (--force needed because node:bookworm ships with yarn)
+RUN npm install -g yarn@1.22.22 --force
 
 # Install Bun globally (latest stable) and make it accessible to all users
 RUN curl -fsSL https://bun.sh/install | bash \
@@ -38,6 +38,10 @@ RUN curl -fsSL https://bun.sh/install | bash \
 RUN npx --yes playwright install-deps chromium
 
 WORKDIR /workspaces/Viewers
+
+# Pre-create the node_modules directory with node ownership so the Docker
+# volume mounted at this path initializes with the correct permissions.
+RUN mkdir -p /workspaces/Viewers/node_modules && chown node:node /workspaces/Viewers/node_modules
 
 # Use the non-root node user for security
 USER node

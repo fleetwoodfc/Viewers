@@ -167,9 +167,9 @@ appears and the list refreshes to show the new assignment.
 - What happens when the network is unavailable at the moment of an action
   (Claim / Complete / Cancel)?  → Error message shown; no state change
   assumed; user may retry.
-- What happens when the performer's AE title is not configured?  → Action
-  buttons requiring performer identity (Reject) are hidden; Claim and
-  Complete remain available using only the transaction UID.
+- What happens when the performer's AE title is not configured?  → "Reject"
+  is hidden.  Claim and Complete remain available; the COMPLETED payload uses
+  `UNKNOWN` as the station name code value.
 - What happens when a workitem is in a terminal state (COMPLETED or CANCELED)
   and the user clicks an action button that was rendered before the list
   refreshed?  → The server returns an error; the UI shows the error and
@@ -184,15 +184,27 @@ appears and the list refreshes to show the new assignment.
 - **FR-001**: The worklist MUST display a "Claim" action button on rows whose
   Procedure Step State is SCHEDULED.
 - **FR-002**: Claiming a workitem MUST change its Procedure Step State to
-  IN PROGRESS (RAD-82: Change UPS State → IN PROGRESS).
+  IN PROGRESS (RAD-82: Change UPS State → IN PROGRESS) and MUST immediately
+  record `00404050` (PerformedProcedureStepStartDateTime) inside `00741216`
+  via a `updateWorkitem` call, using the wall-clock time of the claim.  The
+  timestamp MUST be persisted to `localStorage` (key `ups_startdt_{workitemUID}`)
+  for recovery at completion time.
 - **FR-003**: The worklist MUST display "Complete" and "Cancel" action buttons
   on rows whose Procedure Step State is IN PROGRESS and which were transitioned
   to IN PROGRESS by the configured performer AE title.  The Transaction UID
   required for these actions is tracked by the SCU: held in memory after a
-  claim and persisted to `sessionStorage` for recovery across page refreshes
-  within the same browser tab.
+  claim and persisted to `localStorage` (key `ups_txuid_{workitemUID}`) for
+  recovery across page refreshes, new tabs, and new browser windows on the
+  same origin.  The entry is removed on successful Complete or Cancel.
 - **FR-004**: Completing a workitem MUST change its Procedure Step State to
-  COMPLETED (RAD-85: Complete UPS Workitem).
+  COMPLETED (RAD-85: Complete UPS Workitem).  Before the state change, a
+  `updateWorkitem` call MUST set `00741216` with all four required attributes:
+  `00404050` (PerformedProcedureStepStartDateTime) set to the timestamp
+  recorded at claim time (recovered from `localStorage` if needed), `00404051`
+  (PerformedProcedureStepEndDateTime) set to the current time, `00404028`
+  (PerformedStationNameCodeSequence), and `00404019` (PerformedWorkitemCodeSequence)
+  — both using the configured `performerAeTitle` as the code value (coding scheme
+  `99OHIF`); falling back to `UNKNOWN` if not configured.
 - **FR-005**: Canceling a workitem MUST change its Procedure Step State to
   CANCELED (RAD-85 with CANCELED state) and allow the performer to supply an
   optional free-text reason.
@@ -226,9 +238,10 @@ appears and the list refreshes to show the new assignment.
   on that workitem.  The SCU is the authoritative source — the SCP treats it
   as an opaque lock token and does not reliably return it in GET responses.
   The client holds it in an in-memory ref during the session and persists it
-  to `sessionStorage` so that page refreshes within the same browser tab do
-  not lose the mapping.  If the mapping is unavailable (different tab, session
-  cleared), Complete/Cancel will surface an error.
+  to `localStorage` (key `ups_txuid_{workitemUID}`) so that page refreshes,
+  new tabs, and new browser windows on the same origin do not lose the mapping.
+  If the mapping is unavailable (storage cleared, different browser, or private
+  browsing), Complete/Cancel will surface a descriptive error toast.
 - **Performer Identity**: The AE title or station name used to match assigned
   workitems and to populate Performing Station fields on claim.  Sourced from
   the datasource configuration.
@@ -266,7 +279,8 @@ appears and the list refreshes to show the new assignment.
   and functioning.
 - The performer AE title is configurable per datasource instance (via a new
   `performerAeTitle` config field); if omitted, the "Reject" button is
-  suppressed.
+  suppressed and COMPLETED DICOM code sequences use `UNKNOWN` as the code
+  value.
 - A generated UUID is sufficient as the Transaction UID for claiming; no
   server-side pre-registration is required.  The UUID MUST be converted to a
   valid DICOM UI VR value using the `2.25.{decimal}` OID arc (ISO/IEC 9834-8 /
@@ -278,3 +292,14 @@ appears and the list refreshes to show the new assignment.
   layout is acceptable.
 - Billing, report storage, and output document management are explicitly out
   of scope (handled by the Task Requester after completion).
+
+---
+
+## Clarifications
+
+### Session 2026-05-05
+
+- Q: Should Transaction UID be persisted to `sessionStorage` (tab-scoped) or `localStorage` (cross-window, same origin)? → A: `localStorage` — survives new windows/tabs on the same origin; entries cleaned up on Complete/Cancel.
+- Q: Should COMPLETED DICOM code sequences (`00404028`, `00404019`) use placeholder codes or the configured `performerAeTitle`? → A: Use `performerAeTitle` as the code value (coding scheme `99OHIF`); fall back to `UNKNOWN` if not configured.
+- Q: When should `00404050` (PerformedProcedureStepStartDateTime) be recorded? → A: At claim time (transition to IN PROGRESS), not at completion time. The timestamp is persisted to `localStorage` (`ups_startdt_{uid}`) so it can be recovered at complete time.
+- Q: Can a single attribute inside `00741216` SQ be updated independently (e.g. set `00404050` at claim, add `00404051` later)? → A: No. DICOM PS3.18 §11.10.3 specifies SQ attributes **replace** the entire sequence on each `updateWorkitem` POST. Therefore `complete()` MUST re-send all four required attributes (`00404050`, `00404051`, `00404028`, `00404019`) in one call, using the stored claim-time DT for `00404050`.
